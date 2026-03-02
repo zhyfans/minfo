@@ -9,8 +9,9 @@ import (
     "net/http"
     "os"
     "path/filepath"
-    "strconv"
+    "sort"
     "strings"
+    "strconv"
     "time"
 )
 
@@ -232,14 +233,10 @@ func screenshotsHandler(w http.ResponseWriter, r *http.Request) {
     defer os.RemoveAll(tempDir)
 
     stamps := calcTimestamps(duration)
-    files := make([]string, 0, len(stamps))
-    for i, ts := range stamps {
-        outPath := filepath.Join(tempDir, fmt.Sprintf("shot_%02d.png", i+1))
-        if err := captureShot(ctx, ffmpeg, sourcePath, ts, outPath); err != nil {
-            writeError(w, http.StatusInternalServerError, err.Error())
-            return
-        }
-        files = append(files, outPath)
+    files, err := captureShotsBatch(ctx, ffmpeg, sourcePath, stamps, tempDir)
+    if err != nil {
+        writeError(w, http.StatusInternalServerError, err.Error())
+        return
     }
 
     zipBytes, err := zipFiles(files)
@@ -337,6 +334,80 @@ func captureShot(ctx context.Context, ffmpeg, path string, seconds float64, outP
         return fmt.Errorf("ffmpeg failed: %s", msg)
     }
     return nil
+}
+
+func captureShotsBatch(ctx context.Context, ffmpeg, path string, stamps []float64, tempDir string) ([]string, error) {
+    if len(stamps) == 0 {
+        return nil, errors.New("no screenshot timestamps generated")
+    }
+
+    type shotSpec struct {
+        name string
+        ts   float64
+    }
+
+    specs := make([]shotSpec, 0, len(stamps))
+    for i, ts := range stamps {
+        specs = append(specs, shotSpec{
+            name: filepath.Join(tempDir, fmt.Sprintf("shot_%02d.png", i+1)),
+            ts:   ts,
+        })
+    }
+
+    sort.Slice(specs, func(i, j int) bool {
+        return specs[i].ts < specs[j].ts
+    })
+
+    var filterParts []string
+    splitRefs := make([]string, len(specs))
+    for i := range specs {
+        splitRefs[i] = fmt.Sprintf("[v%d]", i)
+    }
+    filterParts = append(filterParts, fmt.Sprintf("[0:v]split=%d%s", len(specs), strings.Join(splitRefs, "")))
+
+    args := []string{
+        "-hide_banner",
+        "-loglevel", "error",
+        "-y",
+        "-i", path,
+    }
+
+    for i, spec := range specs {
+        ts := fmt.Sprintf("%.3f", spec.ts)
+        filterParts = append(filterParts, fmt.Sprintf("[v%d]select=gte(t\\,%s),setpts=PTS-STARTPTS[o%d]", i, ts, i))
+    }
+
+    args = append(args, "-filter_complex", strings.Join(filterParts, ";"))
+
+    for i, spec := range specs {
+        args = append(args,
+            "-map", fmt.Sprintf("[o%d]", i),
+            "-frames:v:0", "1",
+            "-q:v:0", "2",
+            spec.name,
+        )
+    }
+
+    stdout, stderr, err := runCommand(ctx, ffmpeg, args...)
+    if err != nil {
+        msg := strings.TrimSpace(stderr)
+        if msg == "" {
+            msg = err.Error()
+        }
+        if strings.TrimSpace(stdout) != "" {
+            msg += "\n" + strings.TrimSpace(stdout)
+        }
+        return nil, fmt.Errorf("ffmpeg batch shots failed: %s", msg)
+    }
+
+    files := make([]string, 0, len(specs))
+    for _, spec := range specs {
+        if _, err := os.Stat(spec.name); err != nil {
+            return nil, fmt.Errorf("ffmpeg batch shots missing output: %s", spec.name)
+        }
+        files = append(files, spec.name)
+    }
+    return files, nil
 }
 
 func calcTimestamps(duration float64) []float64 {
