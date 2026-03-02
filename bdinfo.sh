@@ -34,7 +34,7 @@ report_name="bdinfo.txt"
 report_path="$out_dir/$report_name"
 
 # shellcheck disable=SC2086
-if ! "$bdinfo_bin" -p "$input" -o "$report_path" $args >"$log_file" 2>&1; then
+if ! (cd "$out_dir" && "$bdinfo_bin" -p "$input" -o "$report_name" $args) >"$log_file" 2>&1; then
   cat "$log_file" >&2
   exit 1
 fi
