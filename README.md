@@ -21,10 +21,10 @@ services:
       WEB_PASSWORD: "adminadmin"
       REQUEST_TIMEOUT: "20m"
     volumes:
-      - /your/media/path1:/media_path1
-      - /your/media/path2:/media_path2
-      - /your/media/path3:/media_path3
-      - /your/media/path4:/media_path4
+      - /your/media/path1:/media_path1:ro
+      - /your/media/path2:/media_path2:ro
+      - /your/media/path3:/media_path3:ro
+      - /your/media/path4:/media_path4:ro
     restart: unless-stopped
 ```
 
