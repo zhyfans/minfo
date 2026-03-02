@@ -217,6 +217,11 @@ input[type="text"] {
   background: rgba(47, 111, 109, 0.14);
 }
 
+.browser-row.locked {
+  pointer-events: none;
+  opacity: 0.68;
+}
+
 .browser-row.directory .browser-row-name {
   font-weight: 600;
 }

@@ -63,6 +63,7 @@
                                 :class="{
                                     selected: normalizeComparePath(path) === normalizeComparePath(entry.path),
                                     directory: entry.isDir,
+                                    locked: busy || browserLoading,
                                 }"
                                 v-for="entry in filteredEntries"
                                 :key="entry.path"
@@ -77,9 +78,9 @@
             </div>
 
             <div class="actions">
-                <button :disabled="busy" @click="runInfo('/api/mediainfo', 'MediaInfo')">生成 MediaInfo</button>
-                <button :disabled="busy" @click="runInfo('/api/bdinfo', 'BDInfo')">生成 BDInfo</button>
-                <button :disabled="busy" @click="downloadShots">下载 4 张截图</button>
+                <button :disabled="busy || !hasInput()" @click="runInfo('/api/mediainfo', 'MediaInfo')">生成 MediaInfo</button>
+                <button :disabled="busy || !hasInput()" @click="runInfo('/api/bdinfo', 'BDInfo')">生成 BDInfo</button>
+                <button :disabled="busy || !hasInput()" @click="downloadShots">下载 4 张截图</button>
             </div>
         </section>
 
@@ -313,10 +314,16 @@ const refreshBrowser = async () => {
 };
 
 const choosePath = (value) => {
+    if (busy.value || browserLoading.value) {
+        return;
+    }
     path.value = value;
 };
 
 const handleEntryDoubleClick = async (entry) => {
+    if (busy.value || browserLoading.value) {
+        return;
+    }
     if (entry.isDir) {
         await loadDirectory(entry.path);
         return;
