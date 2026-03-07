@@ -15,6 +15,29 @@ import (
     "time"
 )
 
+const (
+    screenshotModeLossless   = "lossless"
+    screenshotModeCompressed = "compressed"
+    screenshotFileLimit10MiB = int64(10 << 20)
+)
+
+type screenshotCaptureOptions struct {
+    Extension  string
+    OutputArgs []string
+}
+
+type screenshotCompressionAttempt struct {
+    Quality int
+    Scale   float64
+}
+
+func (a screenshotCompressionAttempt) label() string {
+    if a.Scale >= 0.999 {
+        return fmt.Sprintf("jpeg q=%d", a.Quality)
+    }
+    return fmt.Sprintf("jpeg q=%d scale=%.0f%%", a.Quality, a.Scale*100)
+}
+
 func infoHandler(envKey, fallback string) http.HandlerFunc {
     return func(w http.ResponseWriter, r *http.Request) {
         if !ensurePost(w, r) {
@@ -191,6 +214,12 @@ func screenshotsHandler(w http.ResponseWriter, r *http.Request) {
     }
     defer cleanupMultipart(r)
 
+    mode, err := parseScreenshotMode(r)
+    if err != nil {
+        writeError(w, http.StatusBadRequest, err.Error())
+        return
+    }
+
     path, cleanup, err := inputPath(r)
     if err != nil {
         writeError(w, http.StatusBadRequest, err.Error())
@@ -233,24 +262,140 @@ func screenshotsHandler(w http.ResponseWriter, r *http.Request) {
     defer os.RemoveAll(tempDir)
 
     stamps := calcTimestamps(duration)
-    files, err := captureShotsConcurrent(ctx, ffmpeg, sourcePath, stamps, tempDir)
-    if err != nil {
-        writeError(w, http.StatusInternalServerError, err.Error())
-        return
-    }
-
-    zipBytes, err := zipFiles(files)
+    zipBytes, downloadName, err := buildScreenshotsZip(ctx, ffmpeg, sourcePath, stamps, tempDir, mode)
     if err != nil {
         writeError(w, http.StatusInternalServerError, err.Error())
         return
     }
 
     w.Header().Set("Content-Type", "application/zip")
-    w.Header().Set("Content-Disposition", "attachment; filename=\"screenshots.zip\"")
+    w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", downloadName))
     w.WriteHeader(http.StatusOK)
     if _, err := w.Write(zipBytes); err != nil {
         log.Printf("write response: %v", err)
     }
+}
+
+func parseScreenshotMode(r *http.Request) (string, error) {
+    mode := strings.ToLower(strings.TrimSpace(r.FormValue("screenshot_mode")))
+    switch mode {
+    case "", screenshotModeLossless:
+        return screenshotModeLossless, nil
+    case screenshotModeCompressed, "under10m", "10m":
+        return screenshotModeCompressed, nil
+    default:
+        return "", fmt.Errorf("unsupported screenshot mode: %s", mode)
+    }
+}
+
+func buildScreenshotsZip(ctx context.Context, ffmpeg, path string, stamps []float64, tempDir, mode string) ([]byte, string, error) {
+    switch mode {
+    case screenshotModeLossless:
+        files, err := captureShotsConcurrent(ctx, ffmpeg, path, stamps, tempDir, screenshotLosslessOptions())
+        if err != nil {
+            return nil, "", err
+        }
+        zipBytes, err := zipFiles(files)
+        if err != nil {
+            return nil, "", err
+        }
+        return zipBytes, "screenshots.zip", nil
+    case screenshotModeCompressed:
+        return buildCompressedScreenshotsZip(ctx, ffmpeg, path, stamps, tempDir)
+    default:
+        return nil, "", fmt.Errorf("unsupported screenshot mode: %s", mode)
+    }
+}
+
+func buildCompressedScreenshotsZip(ctx context.Context, ffmpeg, path string, stamps []float64, tempDir string) ([]byte, string, error) {
+    var lastSize int64
+    var lastFile string
+    var lastLabel string
+
+    for _, attempt := range screenshotCompressionAttempts() {
+        files, err := captureShotsConcurrent(ctx, ffmpeg, path, stamps, tempDir, screenshotJPEGOptions(attempt))
+        if err != nil {
+            return nil, "", err
+        }
+
+        maxSize, maxFile, err := largestScreenshotSize(files)
+        if err != nil {
+            return nil, "", err
+        }
+
+        lastSize = maxSize
+        lastFile = maxFile
+        lastLabel = attempt.label()
+        log.Printf("screenshot compression attempt %s -> max file %s (%s)", lastLabel, filepath.Base(lastFile), formatMiB(lastSize))
+        if lastSize < screenshotFileLimit10MiB {
+            zipBytes, err := zipFiles(files)
+            if err != nil {
+                return nil, "", err
+            }
+            return zipBytes, "screenshots-compressed.zip", nil
+        }
+    }
+
+    if lastSize == 0 {
+        return nil, "", errors.New("failed to build compressed screenshots")
+    }
+    return nil, "", fmt.Errorf("unable to compress each screenshot below 10 MiB; largest result was %s (%s, %s)", formatMiB(lastSize), filepath.Base(lastFile), lastLabel)
+}
+
+func screenshotLosslessOptions() screenshotCaptureOptions {
+    return screenshotCaptureOptions{Extension: "png"}
+}
+
+func screenshotJPEGOptions(attempt screenshotCompressionAttempt) screenshotCaptureOptions {
+    args := []string{
+        "-c:v", "mjpeg",
+        "-q:v", strconv.Itoa(attempt.Quality),
+    }
+    if attempt.Scale > 0 && attempt.Scale < 0.999 {
+        scale := fmt.Sprintf("scale=trunc(iw*%.2f/2)*2:trunc(ih*%.2f/2)*2", attempt.Scale, attempt.Scale)
+        args = append(args, "-vf", scale)
+    }
+    return screenshotCaptureOptions{
+        Extension:  "jpg",
+        OutputArgs: args,
+    }
+}
+
+func screenshotCompressionAttempts() []screenshotCompressionAttempt {
+    qualities := []int{4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30}
+    attempts := make([]screenshotCompressionAttempt, 0, len(qualities)+25)
+    for _, quality := range qualities {
+        attempts = append(attempts, screenshotCompressionAttempt{Quality: quality, Scale: 1})
+    }
+    for _, scale := range []float64{0.9, 0.8, 0.7, 0.6, 0.5} {
+        for _, quality := range []int{14, 18, 22, 26, 30} {
+            attempts = append(attempts, screenshotCompressionAttempt{Quality: quality, Scale: scale})
+        }
+    }
+    return attempts
+}
+
+func largestScreenshotSize(paths []string) (int64, string, error) {
+    var maxSize int64
+    var maxPath string
+
+    for _, path := range paths {
+        info, err := os.Stat(path)
+        if err != nil {
+            return 0, "", err
+        }
+        size := info.Size()
+        if size > maxSize || maxPath == "" {
+            maxSize = size
+            maxPath = path
+        }
+    }
+
+    return maxSize, maxPath, nil
+}
+
+func formatMiB(size int64) string {
+    return fmt.Sprintf("%.2f MiB", float64(size)/float64(1<<20))
 }
 
 func pathSuggestHandler(w http.ResponseWriter, r *http.Request) {
@@ -310,12 +455,12 @@ func probeDuration(ctx context.Context, ffprobe, path string) (float64, error) {
     return duration, nil
 }
 
-func captureShot(ctx context.Context, ffmpeg, path string, seconds float64, outPath string) error {
+func captureShot(ctx context.Context, ffmpeg, path string, seconds float64, outPath string, opts screenshotCaptureOptions) error {
     if seconds < 0 {
         seconds = 0
     }
     ts := formatFFmpegTimestamp(seconds)
-    stdout, stderr, err := runCommand(ctx, ffmpeg,
+    args := []string{
         "-hide_banner",
         "-loglevel", "error",
         "-y",
@@ -324,8 +469,10 @@ func captureShot(ctx context.Context, ffmpeg, path string, seconds float64, outP
         "-i", path,
         "-frames:v", "1",
         "-an",
-        outPath,
-    )
+    }
+    args = append(args, opts.OutputArgs...)
+    args = append(args, outPath)
+    stdout, stderr, err := runCommand(ctx, ffmpeg, args...)
     if err == nil {
         return nil
     }
@@ -341,7 +488,7 @@ func captureShot(ctx context.Context, ffmpeg, path string, seconds float64, outP
     preTS := formatFFmpegTimestamp(pre)
     postTS := formatFFmpegTimestamp(post)
 
-    stdout2, stderr2, err2 := runCommand(ctx, ffmpeg,
+    fallbackArgs := []string{
         "-hide_banner",
         "-loglevel", "error",
         "-y",
@@ -351,8 +498,10 @@ func captureShot(ctx context.Context, ffmpeg, path string, seconds float64, outP
         "-t", "1",
         "-frames:v", "1",
         "-an",
-        outPath,
-    )
+    }
+    fallbackArgs = append(fallbackArgs, opts.OutputArgs...)
+    fallbackArgs = append(fallbackArgs, outPath)
+    stdout2, stderr2, err2 := runCommand(ctx, ffmpeg, fallbackArgs...)
     if err2 != nil {
         msg := strings.TrimSpace(stderr2)
         if msg == "" {
@@ -395,14 +544,14 @@ func screenshotConcurrency() int {
     return 4
 }
 
-func captureShotsConcurrent(ctx context.Context, ffmpeg, path string, stamps []float64, tempDir string) ([]string, error) {
+func captureShotsConcurrent(ctx context.Context, ffmpeg, path string, stamps []float64, tempDir string, opts screenshotCaptureOptions) ([]string, error) {
     if len(stamps) == 0 {
         return nil, errors.New("no screenshot timestamps generated")
     }
 
     files := make([]string, 0, len(stamps))
     for i := range stamps {
-        outPath := filepath.Join(tempDir, fmt.Sprintf("shot_%02d.png", i+1))
+        outPath := filepath.Join(tempDir, fmt.Sprintf("shot_%02d.%s", i+1, opts.Extension))
         files = append(files, outPath)
     }
 
@@ -436,7 +585,7 @@ func captureShotsConcurrent(ctx context.Context, ffmpeg, path string, stamps []f
             }
             defer func() { <-sem }()
 
-            if err := captureShot(runCtx, ffmpeg, path, ts, outPath); err != nil {
+            if err := captureShot(runCtx, ffmpeg, path, ts, outPath, opts); err != nil {
                 setErr(err)
             }
         }()

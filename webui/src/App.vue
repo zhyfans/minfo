@@ -80,7 +80,22 @@
             <div class="actions">
                 <button :disabled="busy || !hasInput()" @click="runInfo('/api/mediainfo', 'MediaInfo')">生成 MediaInfo</button>
                 <button :disabled="busy || !hasInput()" @click="runInfo('/api/bdinfo', 'BDInfo')">生成 BDInfo</button>
-                <button :disabled="busy || !hasInput()" @click="downloadShots">下载 4 张截图</button>
+                <div class="screenshot-actions">
+                    <div class="download-shots-combo">
+                        <label
+                            class="mini-shot-switch"
+                            :class="{ compressed: compressedShots, disabled: busy }"
+                            :title="compressedShots ? '压制' : '无损'"
+                        >
+                            <input v-model="compressedShots" type="checkbox" :disabled="busy" aria-label="切换截图模式" />
+                            <span class="mini-shot-switch-slider"></span>
+                        </label>
+                        <button class="download-shots-btn" :disabled="busy || !hasInput()" @click="downloadShots">
+                            下载截图
+                            <span class="download-shots-mode">{{ compressedShots ? "压制" : "无损" }}</span>
+                        </button>
+                    </div>
+                </div>
             </div>
         </section>
 
@@ -104,6 +119,7 @@ const path = ref("");
 const output = ref("就绪。");
 const busy = ref(false);
 const copyLabel = ref("复制");
+const compressedShots = ref(false);
 
 const browserRoots = ref([]);
 const browserRoot = ref("");
@@ -331,13 +347,39 @@ const handleEntryDoubleClick = async (entry) => {
     choosePath(entry.path);
 };
 
-const postForm = async (url) => {
+const postForm = async (url, extras = {}) => {
     const form = new FormData();
     const value = path.value.trim();
     if (value !== "") {
         form.append("path", value);
     }
+    for (const [key, rawValue] of Object.entries(extras)) {
+        if (rawValue === undefined || rawValue === null) {
+            continue;
+        }
+        const extraValue = `${rawValue}`.trim();
+        if (extraValue !== "") {
+            form.append(key, extraValue);
+        }
+    }
     return fetch(url, { method: "POST", body: form });
+};
+
+const getDownloadFilename = (res, fallback) => {
+    const header = res.headers.get("content-disposition") || "";
+    const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+    if (utf8Match && utf8Match[1]) {
+        try {
+            return decodeURIComponent(utf8Match[1]);
+        } catch (err) {
+            return utf8Match[1];
+        }
+    }
+    const plainMatch = header.match(/filename="?([^";]+)"?/i);
+    if (plainMatch && plainMatch[1]) {
+        return plainMatch[1];
+    }
+    return fallback;
 };
 
 const runInfo = async (url, label) => {
@@ -371,8 +413,9 @@ const downloadShots = async () => {
         return;
     }
     try {
-        setBusy(true, "正在生成截图...");
-        const res = await postForm("/api/screenshots");
+        const compressed = compressedShots.value;
+        setBusy(true, compressed ? "正在生成压制截图（单张<10 MiB）..." : "正在生成无损截图...");
+        const res = await postForm("/api/screenshots", { screenshot_mode: compressed ? "compressed" : "lossless" });
         const contentType = res.headers.get("content-type") || "";
         if (!res.ok || !contentType.includes("application/zip")) {
             let data = {};
@@ -385,14 +428,15 @@ const downloadShots = async () => {
         }
         const blob = await res.blob();
         const url = window.URL.createObjectURL(blob);
+        const filename = getDownloadFilename(res, compressed ? "screenshots-compressed.zip" : "screenshots.zip");
         const a = document.createElement("a");
         a.href = url;
-        a.download = "screenshots.zip";
+        a.download = filename;
         document.body.appendChild(a);
         a.click();
         a.remove();
         window.URL.revokeObjectURL(url);
-        appendOutput("截图已下载为 screenshots.zip。");
+        appendOutput(`截图已下载为 ${filename}。`);
     } catch (err) {
         errorOutput(err && err.message ? err.message : "截图请求失败。");
     } finally {

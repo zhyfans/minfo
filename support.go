@@ -433,6 +433,7 @@ func zipFiles(paths []string) ([]byte, error) {
             return nil, err
         }
         header.Name = filepath.Base(path)
+        header.Method = zip.Deflate
         writer, err := zw.CreateHeader(header)
         if err != nil {
             file.Close()
