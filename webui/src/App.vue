@@ -250,8 +250,14 @@ const fetchDirectory = async (prefix) => {
 
     const res = await fetch(url.toString(), { signal: browserController.signal });
     const data = await res.json();
-    if (!res.ok || !data.ok || !Array.isArray(data.items)) {
+    if (!res.ok || !data.ok) {
         throw new Error(data.error || "读取路径失败。");
+    }
+    if (!Array.isArray(data.items)) {
+        data.items = [];
+    }
+    if (!Array.isArray(data.roots)) {
+        data.roots = [];
     }
     return data;
 };
@@ -416,8 +422,7 @@ const downloadShots = async () => {
         const compressed = compressedShots.value;
         setBusy(true, compressed ? "正在生成压制截图（单张<10 MiB）..." : "正在生成无损截图...");
         const res = await postForm("/api/screenshots", { screenshot_mode: compressed ? "compressed" : "lossless" });
-        const contentType = res.headers.get("content-type") || "";
-        if (!res.ok || !contentType.includes("application/zip")) {
+        if (!res.ok) {
             let data = {};
             try {
                 data = await res.json();
@@ -427,6 +432,9 @@ const downloadShots = async () => {
             throw new Error(data.error || "截图请求失败。");
         }
         const blob = await res.blob();
+        if (!blob || blob.size === 0) {
+            throw new Error("截图结果为空。");
+        }
         const url = window.URL.createObjectURL(blob);
         const filename = getDownloadFilename(res, compressed ? "screenshots-compressed.zip" : "screenshots.zip");
         const a = document.createElement("a");
@@ -435,7 +443,9 @@ const downloadShots = async () => {
         document.body.appendChild(a);
         a.click();
         a.remove();
-        window.URL.revokeObjectURL(url);
+        window.setTimeout(() => {
+            window.URL.revokeObjectURL(url);
+        }, 1000);
         appendOutput(`截图已下载为 ${filename}。`);
     } catch (err) {
         errorOutput(err && err.message ? err.message : "截图请求失败。");

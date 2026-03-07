@@ -44,8 +44,8 @@ type infoResponse struct {
 type pathResponse struct {
     OK    bool     `json:"ok"`
     Root  string   `json:"root,omitempty"`
-    Roots []string `json:"roots,omitempty"`
-    Items []string `json:"items,omitempty"`
+    Roots []string `json:"roots"`
+    Items []string `json:"items"`
     Error string   `json:"error,omitempty"`
 }
 
