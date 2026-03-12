@@ -4,13 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const screenshotScriptDir = "/opt/minfo/scripts"
+const screenshotCount = 4
 
 const (
 	screenshotModeZip   = "zip"
@@ -90,7 +94,13 @@ func runScreenshotScript(ctx context.Context, inputPath, outputDir, variant stri
 		return nil, err
 	}
 
-	stdout, stderr, err := runCommand(ctx, "bash", append([]string{scriptPath, inputPath, outputDir}, screenshotVariantArgs(variant)...)...)
+	timestamps, err := randomScreenshotTimestamps(ctx, inputPath, screenshotCount)
+	if err != nil {
+		return nil, err
+	}
+
+	args := append([]string{scriptPath, inputPath, outputDir}, timestamps...)
+	stdout, stderr, err := runCommand(ctx, "bash", args...)
 	if err != nil {
 		return nil, fmt.Errorf("screenshot generation failed: %s", bestErrorMessage(err, stderr, stdout))
 	}
@@ -108,7 +118,14 @@ func runScreenshotUpload(ctx context.Context, inputPath, outputDir, variant stri
 		return "", err
 	}
 
-	stdout, stderr, err := runCommand(ctx, "bash", append([]string{autoScript, inputPath, outputDir}, screenshotVariantArgs(variant)...)...)
+	timestamps, err := randomScreenshotTimestamps(ctx, inputPath, screenshotCount)
+	if err != nil {
+		return "", err
+	}
+
+	args := append(screenshotVariantArgs(variant), inputPath, outputDir)
+	args = append(args, timestamps...)
+	stdout, stderr, err := runCommand(ctx, "bash", append([]string{autoScript}, args...)...)
 	if err != nil {
 		return "", fmt.Errorf("screenshot upload failed: %s", bestErrorMessage(err, stderr, stdout))
 	}
@@ -126,6 +143,134 @@ func runScreenshotUpload(ctx context.Context, inputPath, outputDir, variant stri
 	}
 
 	return strings.Join(links, "\n"), nil
+}
+
+func randomScreenshotTimestamps(ctx context.Context, inputPath string, count int) ([]string, error) {
+	if count <= 0 {
+		count = screenshotCount
+	}
+
+	ffprobe, err := resolveBin("FFPROBE_BIN", "ffprobe")
+	if err != nil {
+		return nil, err
+	}
+
+	sourcePath, cleanup, err := resolveScreenshotSource(ctx, inputPath)
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	duration, err := probeMediaDuration(ctx, ffprobe, sourcePath)
+	if err != nil {
+		return nil, err
+	}
+
+	seconds := buildRandomTimestampSeconds(duration, count)
+	timestamps := make([]string, 0, len(seconds))
+	for _, second := range seconds {
+		timestamps = append(timestamps, formatScriptTimestamp(second))
+	}
+	return timestamps, nil
+}
+
+func probeMediaDuration(ctx context.Context, ffprobe, path string) (float64, error) {
+	stdout, stderr, err := runCommand(ctx, ffprobe,
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=noprint_wrappers=1:nokey=1",
+		path,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe failed: %s", bestErrorMessage(err, stderr, stdout))
+	}
+
+	value := strings.TrimSpace(stdout)
+	if value == "" {
+		return 0, errors.New("ffprobe returned empty duration")
+	}
+
+	duration, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid duration: %v", err)
+	}
+	if duration <= 0 {
+		return 0, errors.New("duration must be positive")
+	}
+	return duration, nil
+}
+
+func buildRandomTimestampSeconds(duration float64, count int) []int {
+	if count <= 0 {
+		count = screenshotCount
+	}
+
+	start := 0.0
+	end := duration
+	if duration > 120 {
+		margin := duration * 0.08
+		if margin < 15 {
+			margin = 15
+		}
+		if margin > 300 {
+			margin = 300
+		}
+		start = margin
+		end = duration - margin
+		if end <= start {
+			start = 0
+			end = duration
+		}
+	}
+
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	step := (end - start) / float64(count)
+	if step <= 0 {
+		step = duration / float64(count+1)
+	}
+
+	values := make([]int, 0, count)
+	used := make(map[int]struct{}, count)
+	for index := 0; index < count; index++ {
+		segmentStart := start + step*float64(index)
+		segmentEnd := segmentStart + step
+		if index == count-1 || segmentEnd > end {
+			segmentEnd = end
+		}
+		if segmentEnd <= segmentStart {
+			segmentEnd = segmentStart + 1
+		}
+
+		value := int(segmentStart + rng.Float64()*(segmentEnd-segmentStart))
+		if value < 0 {
+			value = 0
+		}
+		maxSecond := int(duration)
+		if maxSecond > 0 && value >= maxSecond {
+			value = maxSecond - 1
+		}
+		for try := 0; try < 8; try++ {
+			if _, exists := used[value]; !exists {
+				break
+			}
+			value++
+		}
+		used[value] = struct{}{}
+		values = append(values, value)
+	}
+
+	sort.Ints(values)
+	return values
+}
+
+func formatScriptTimestamp(totalSeconds int) string {
+	if totalSeconds < 0 {
+		totalSeconds = 0
+	}
+	hours := totalSeconds / 3600
+	minutes := (totalSeconds % 3600) / 60
+	seconds := totalSeconds % 60
+	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
 }
 
 func listScreenshotFiles(dir string) ([]string, error) {
