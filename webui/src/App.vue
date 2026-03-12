@@ -5,7 +5,7 @@
             <div>
                 <p class="kicker">本地媒体检测</p>
                 <h1>minfo</h1>
-                <p class="lead">一键生成 MediaInfo / BDInfo，一键截图。</p>
+                <p class="lead">一键生成 MediaInfo / BDInfo，可下载截图或输出图床链接。</p>
             </div>
         </header>
 
@@ -77,25 +77,44 @@
                 </div>
             </div>
 
+            <div class="field">
+                <label>截图模式</label>
+                <div class="variant-picker">
+                    <button
+                        type="button"
+                        class="ghost variant-option"
+                        :class="{ active: screenshotVariant === 'png' }"
+                        :disabled="busy"
+                        @click="screenshotVariant = 'png'"
+                    >
+                        PNG
+                    </button>
+                    <button
+                        type="button"
+                        class="ghost variant-option"
+                        :class="{ active: screenshotVariant === 'jpg' }"
+                        :disabled="busy"
+                        @click="screenshotVariant = 'jpg'"
+                    >
+                        JPG
+                    </button>
+                    <button
+                        type="button"
+                        class="ghost variant-option"
+                        :class="{ active: screenshotVariant === 'fast' }"
+                        :disabled="busy"
+                        @click="screenshotVariant = 'fast'"
+                    >
+                        FAST
+                    </button>
+                </div>
+            </div>
+
             <div class="actions">
                 <button :disabled="busy || !hasInput()" @click="runInfo('/api/mediainfo', 'MediaInfo')">生成 MediaInfo</button>
                 <button :disabled="busy || !hasInput()" @click="runInfo('/api/bdinfo', 'BDInfo')">生成 BDInfo</button>
-                <div class="screenshot-actions">
-                    <div class="download-shots-combo">
-                        <label
-                            class="mini-shot-switch"
-                            :class="{ compressed: compressedShots, disabled: busy }"
-                            :title="compressedShots ? '压制' : '无损'"
-                        >
-                            <input v-model="compressedShots" type="checkbox" :disabled="busy" aria-label="切换截图模式" />
-                            <span class="mini-shot-switch-slider"></span>
-                        </label>
-                        <button class="download-shots-btn" :disabled="busy || !hasInput()" @click="downloadShots">
-                            下载截图
-                            <span class="download-shots-mode">{{ compressedShots ? "压制" : "无损" }}</span>
-                        </button>
-                    </div>
-                </div>
+                <button :disabled="busy || !hasInput()" @click="downloadShots">下载 4 张截图</button>
+                <button :disabled="busy || !hasInput()" @click="outputShotLinks">输出图床链接</button>
             </div>
         </section>
 
@@ -119,7 +138,7 @@ const path = ref("");
 const output = ref("就绪。");
 const busy = ref(false);
 const copyLabel = ref("复制");
-const compressedShots = ref(false);
+const screenshotVariant = ref("png");
 
 const browserRoots = ref([]);
 const browserRoot = ref("");
@@ -129,8 +148,6 @@ const browserLoading = ref(false);
 const browserError = ref("");
 const searchKeyword = ref("");
 let browserController = null;
-let screenshotDownloadFrame = null;
-let screenshotDownloadForm = null;
 
 const hasInput = () => path.value.trim() !== "";
 
@@ -252,14 +269,8 @@ const fetchDirectory = async (prefix) => {
 
     const res = await fetch(url.toString(), { signal: browserController.signal });
     const data = await res.json();
-    if (!res.ok || !data.ok) {
+    if (!res.ok || !data.ok || !Array.isArray(data.items)) {
         throw new Error(data.error || "读取路径失败。");
-    }
-    if (!Array.isArray(data.items)) {
-        data.items = [];
-    }
-    if (!Array.isArray(data.roots)) {
-        data.roots = [];
     }
     return data;
 };
@@ -355,82 +366,18 @@ const handleEntryDoubleClick = async (entry) => {
     choosePath(entry.path);
 };
 
-const postForm = async (url, extras = {}) => {
+const postForm = async (url, fields = {}) => {
     const form = new FormData();
     const value = path.value.trim();
     if (value !== "") {
         form.append("path", value);
     }
-    for (const [key, rawValue] of Object.entries(extras)) {
-        if (rawValue === undefined || rawValue === null) {
-            continue;
-        }
-        const extraValue = `${rawValue}`.trim();
-        if (extraValue !== "") {
-            form.append(key, extraValue);
+    for (const [key, fieldValue] of Object.entries(fields)) {
+        if (fieldValue !== undefined && fieldValue !== null && `${fieldValue}` !== "") {
+            form.append(key, `${fieldValue}`);
         }
     }
     return fetch(url, { method: "POST", body: form });
-};
-
-const ensureScreenshotDownloadTransport = () => {
-    if (screenshotDownloadFrame && screenshotDownloadForm) {
-        return;
-    }
-
-    screenshotDownloadFrame = document.createElement("iframe");
-    screenshotDownloadFrame.name = "screenshot-download-frame";
-    screenshotDownloadFrame.style.display = "none";
-
-    screenshotDownloadForm = document.createElement("form");
-    screenshotDownloadForm.method = "POST";
-    screenshotDownloadForm.target = screenshotDownloadFrame.name;
-    screenshotDownloadForm.enctype = "multipart/form-data";
-    screenshotDownloadForm.style.display = "none";
-
-    screenshotDownloadFrame.addEventListener("load", () => {
-        try {
-            const doc = screenshotDownloadFrame.contentDocument;
-            const text = (doc?.body?.textContent || "").trim();
-            if (text === "") {
-                return;
-            }
-            const data = JSON.parse(text);
-            if (data && data.ok === false) {
-                errorOutput(data.error || "截图请求失败。");
-            }
-        } catch (err) {
-        }
-    });
-
-    document.body.appendChild(screenshotDownloadFrame);
-    document.body.appendChild(screenshotDownloadForm);
-};
-
-const submitDownloadForm = async (url, fields = {}) => {
-    ensureScreenshotDownloadTransport();
-
-    screenshotDownloadForm.action = url;
-    screenshotDownloadForm.replaceChildren();
-
-    const addField = (name, rawValue) => {
-        if (rawValue === undefined || rawValue === null) {
-            return;
-        }
-        const value = `${rawValue}`;
-        const input = document.createElement("input");
-        input.type = "hidden";
-        input.name = name;
-        input.value = value;
-        screenshotDownloadForm.appendChild(input);
-    };
-
-    addField("path", path.value.trim());
-    for (const [key, value] of Object.entries(fields)) {
-        addField(key, value);
-    }
-
-    screenshotDownloadForm.submit();
 };
 
 const runInfo = async (url, label) => {
@@ -464,12 +411,55 @@ const downloadShots = async () => {
         return;
     }
     try {
-        const compressed = compressedShots.value;
-        setBusy(true, compressed ? "正在生成压制截图（单张<10 MiB）..." : "正在生成无损截图...");
-        await submitDownloadForm("/api/screenshots", { screenshot_mode: compressed ? "compressed" : "lossless" });
-        appendOutput("截图下载已发起，请查看浏览器或下载器。");
+        setBusy(true, "正在生成截图...");
+        const res = await postForm("/api/screenshots", { mode: "zip", variant: screenshotVariant.value });
+        const contentType = res.headers.get("content-type") || "";
+        if (!res.ok || !contentType.includes("application/zip")) {
+            let data = {};
+            try {
+                data = await res.json();
+            } catch (err) {
+                data = {};
+            }
+            throw new Error(data.error || "截图请求失败。");
+        }
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "screenshots.zip";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        appendOutput("截图已下载为 screenshots.zip。");
     } catch (err) {
         errorOutput(err && err.message ? err.message : "截图请求失败。");
+    } finally {
+        setBusy(false);
+    }
+};
+
+const outputShotLinks = async () => {
+    if (!hasInput()) {
+        errorOutput("请先选择媒体路径。");
+        return;
+    }
+    try {
+        setBusy(true, "正在生成截图并上传...");
+        const res = await postForm("/api/screenshots", { mode: "links", variant: screenshotVariant.value });
+        let data = {};
+        try {
+            data = await res.json();
+        } catch (err) {
+            data = {};
+        }
+        if (!res.ok || !data.ok) {
+            throw new Error(data.error || "图床链接请求失败。");
+        }
+        appendOutput(data.output || "没有返回图床链接。");
+    } catch (err) {
+        errorOutput(err && err.message ? err.message : "图床链接请求失败。");
     } finally {
         setBusy(false);
     }
@@ -521,9 +511,5 @@ onBeforeUnmount(() => {
     if (browserController) {
         browserController.abort();
     }
-    screenshotDownloadFrame?.remove();
-    screenshotDownloadForm?.remove();
-    screenshotDownloadFrame = null;
-    screenshotDownloadForm = null;
 });
 </script>

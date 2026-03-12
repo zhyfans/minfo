@@ -3,28 +3,28 @@
 package main
 
 import (
-    "os/exec"
-    "syscall"
-    "time"
+	"os/exec"
+	"syscall"
+	"time"
 )
 
 func setCommandProcessGroup(cmd *exec.Cmd) {
-    cmd.SysProcAttr = &syscall.SysProcAttr{
-        Setpgid: true,
-    }
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
 }
 
 func killCommandProcessGroup(cmd *exec.Cmd) {
-    if cmd == nil || cmd.Process == nil {
-        return
-    }
-    pid := cmd.Process.Pid
-    if pid <= 0 {
-        return
-    }
+	if cmd == nil || cmd.Process == nil {
+		return
+	}
+	pid := cmd.Process.Pid
+	if pid <= 0 {
+		return
+	}
 
-    // Negative PID targets the whole process group.
-    _ = syscall.Kill(-pid, syscall.SIGTERM)
-    time.Sleep(300 * time.Millisecond)
-    _ = syscall.Kill(-pid, syscall.SIGKILL)
+	// Negative PID targets the whole process group.
+	_ = syscall.Kill(-pid, syscall.SIGTERM)
+	time.Sleep(300 * time.Millisecond)
+	_ = syscall.Kill(-pid, syscall.SIGKILL)
 }

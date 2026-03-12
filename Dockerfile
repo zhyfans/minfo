@@ -1,6 +1,11 @@
-ARG BDINFO_REPO=https://github.com/dotnetcorecorner/BDInfo.git
+ARG BDINFO_REPO=https://github.com/mirrorb/BDInfo.git
 ARG BDINFO_REF=master
 ARG BDINFO_CSPROJ=BDInfo.Core/BDInfo/BDInfo.csproj
+ARG SCREENSHOT_AUTO_URL=https://raw.githubusercontent.com/mirrorb/Seedbox/refs/heads/main/AutoScreenshot.sh
+ARG SCREENSHOT_UPLOAD_URL=https://raw.githubusercontent.com/mirrorb/Seedbox/refs/heads/main/PixhostUpload.sh
+ARG SCREENSHOT_PNG_URL=https://raw.githubusercontent.com/mirrorb/Seedbox/refs/heads/main/screenshots.sh
+ARG SCREENSHOT_FAST_URL=https://raw.githubusercontent.com/mirrorb/Seedbox/refs/heads/main/screenshots_fast.sh
+ARG SCREENSHOT_JPG_URL=https://raw.githubusercontent.com/mirrorb/Seedbox/refs/heads/main/screenshots_jpg.sh
 
 # 构建 WebUI
 FROM --platform=$BUILDPLATFORM node:20-alpine AS webui
@@ -62,8 +67,14 @@ RUN set -eux; \
 
 # 最终运行环境 (Alpine)
 FROM alpine:3.19
+ARG SCREENSHOT_AUTO_URL
+ARG SCREENSHOT_UPLOAD_URL
+ARG SCREENSHOT_PNG_URL
+ARG SCREENSHOT_FAST_URL
+ARG SCREENSHOT_JPG_URL
 RUN apk add --no-cache \
     ca-certificates \
+    curl \
     ffmpeg \
     mediainfo \
     kmod \
@@ -73,7 +84,25 @@ RUN apk add --no-cache \
     libstdc++ \
     libgcc \
     tzdata \
-    bash
+    bash \
+    jq \
+    bc \
+    file \
+    coreutils
+
+RUN set -eux; \
+    mkdir -p /opt/minfo/scripts; \
+    curl -fsSL "$SCREENSHOT_AUTO_URL" -o /opt/minfo/scripts/AutoScreenshot.sh; \
+    curl -fsSL "$SCREENSHOT_UPLOAD_URL" -o /opt/minfo/scripts/PixhostUpload.sh; \
+    curl -fsSL "$SCREENSHOT_PNG_URL" -o /opt/minfo/scripts/screenshots.sh; \
+    curl -fsSL "$SCREENSHOT_FAST_URL" -o /opt/minfo/scripts/screenshots_fast.sh; \
+    curl -fsSL "$SCREENSHOT_JPG_URL" -o /opt/minfo/scripts/screenshots_jpg.sh; \
+    sed -i 's#bash <(curl -s https://raw.githubusercontent.com/guyuanwind/Seedbox/refs/heads/main/screenshots_jpg.sh)#bash /opt/minfo/scripts/screenshots_jpg.sh#g' /opt/minfo/scripts/AutoScreenshot.sh; \
+    sed -i 's#bash <(curl -s https://raw.githubusercontent.com/guyuanwind/Seedbox/refs/heads/main/screenshots_fast.sh)#bash /opt/minfo/scripts/screenshots_fast.sh#g' /opt/minfo/scripts/AutoScreenshot.sh; \
+    sed -i 's#bash <(curl -s https://raw.githubusercontent.com/guyuanwind/Seedbox/refs/heads/main/screenshots.sh)#bash /opt/minfo/scripts/screenshots.sh#g' /opt/minfo/scripts/AutoScreenshot.sh; \
+    sed -i 's#bash <(curl -s https://raw.githubusercontent.com/guyuanwind/Seedbox/refs/heads/main/PixhostUpload.sh)#bash /opt/minfo/scripts/PixhostUpload.sh#g' /opt/minfo/scripts/AutoScreenshot.sh; \
+    printf '#!/bin/sh\nexec "$@"\n' > /usr/local/bin/sudo; \
+    chmod +x /usr/local/bin/sudo /opt/minfo/scripts/*.sh
 
 COPY --from=build /out/minfo /usr/local/bin/minfo
 COPY --from=bdinfo-build /out/bdinfo/BDInfo /opt/bdinfo/BDInfo

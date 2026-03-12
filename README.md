@@ -3,7 +3,8 @@
 `minfo` 是一个本地媒体信息检测 Web 工具，主要功能：
 - 输出 MediaInfo 信息
 - 输出 BDInfo 信息
-- 导出随机 4 张截图压缩包
+- 使用 Seedbox 截图脚本生成 4 张截图压缩包
+- 直接输出 Pixhost 图床链接
 
 ## Docker 运行
 

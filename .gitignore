@@ -3,3 +3,4 @@
 /webui/node_modules/
 /webui/.vite/
 /webui/dist/
+.gocache

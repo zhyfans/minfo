@@ -1,792 +1,400 @@
 package main
 
 import (
-    "context"
-    "errors"
-    "fmt"
-    "log"
-    "math/rand"
-    "net/http"
-    "os"
-    "path/filepath"
-    "strconv"
-    "strings"
-    "sync"
-    "time"
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 )
-
-const (
-    screenshotModeLossless   = "lossless"
-    screenshotModeCompressed = "compressed"
-    screenshotFileLimit10MiB = int64(10 << 20)
-)
-
-type screenshotCaptureOptions struct {
-    Extension  string
-    OutputArgs []string
-}
-
-type screenshotCompressionAttempt struct {
-    Quality int
-    Scale   float64
-}
-
-func (a screenshotCompressionAttempt) label() string {
-    if a.Scale >= 0.999 {
-        return fmt.Sprintf("jpeg q=%d", a.Quality)
-    }
-    return fmt.Sprintf("jpeg q=%d scale=%.0f%%", a.Quality, a.Scale*100)
-}
 
 func infoHandler(envKey, fallback string) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        if !ensurePost(w, r) {
-            return
-        }
-        if err := parseForm(w, r); err != nil {
-            writeError(w, http.StatusBadRequest, err.Error())
-            return
-        }
-        defer cleanupMultipart(r)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !ensurePost(w, r) {
+			return
+		}
+		if err := parseForm(w, r); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		defer cleanupMultipart(r)
 
-        path, cleanup, err := inputPath(r)
-        if err != nil {
-            writeError(w, http.StatusBadRequest, err.Error())
-            return
-        }
-        defer cleanup()
+		path, cleanup, err := inputPath(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		defer cleanup()
 
-        bin, err := resolveBin(envKey, fallback)
-        if err != nil {
-            writeError(w, http.StatusBadRequest, err.Error())
-            return
-        }
+		bin, err := resolveBin(envKey, fallback)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 
-        ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
-        defer cancel()
+		ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+		defer cancel()
 
-        stdout, stderr, err := runCommand(ctx, bin, path)
-        if err != nil {
-            writeError(w, http.StatusInternalServerError, bestErrorMessage(err, stderr, stdout))
-            return
-        }
+		stdout, stderr, err := runCommand(ctx, bin, path)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, bestErrorMessage(err, stderr, stdout))
+			return
+		}
 
-        output := strings.TrimSpace(stdout)
-        if strings.TrimSpace(stderr) != "" {
-            if output != "" {
-                output += "\n\n"
-            }
-            output += strings.TrimSpace(stderr)
-        }
-        if output == "" {
-            writeError(w, http.StatusInternalServerError, "mediainfo returned empty output")
-            return
-        }
+		output := strings.TrimSpace(stdout)
+		if strings.TrimSpace(stderr) != "" {
+			if output != "" {
+				output += "\n\n"
+			}
+			output += strings.TrimSpace(stderr)
+		}
+		if output == "" {
+			writeError(w, http.StatusInternalServerError, "mediainfo returned empty output")
+			return
+		}
 
-        writeJSON(w, http.StatusOK, infoResponse{OK: true, Output: output})
-    }
+		writeJSON(w, http.StatusOK, infoResponse{OK: true, Output: output})
+	}
 }
 
 func mediainfoHandler(envKey, fallback string) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        if !ensurePost(w, r) {
-            return
-        }
-        if err := parseForm(w, r); err != nil {
-            writeError(w, http.StatusBadRequest, err.Error())
-            return
-        }
-        defer cleanupMultipart(r)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !ensurePost(w, r) {
+			return
+		}
+		if err := parseForm(w, r); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		defer cleanupMultipart(r)
 
-        path, cleanup, err := inputPath(r)
-        if err != nil {
-            writeError(w, http.StatusBadRequest, err.Error())
-            return
-        }
-        defer cleanup()
+		path, cleanup, err := inputPath(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		defer cleanup()
 
-        bin, err := resolveBin(envKey, fallback)
-        if err != nil {
-            writeError(w, http.StatusBadRequest, err.Error())
-            return
-        }
+		bin, err := resolveBin(envKey, fallback)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 
-        ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
-        defer cancel()
+		ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+		defer cancel()
 
-        candidates, sourceCleanup, err := resolveMediaInfoCandidates(ctx, path, mediaInfoCandidateLimit)
-        if err != nil {
-            writeError(w, http.StatusBadRequest, err.Error())
-            return
-        }
-        defer sourceCleanup()
+		candidates, sourceCleanup, err := resolveMediaInfoCandidates(ctx, path, mediaInfoCandidateLimit)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		defer sourceCleanup()
 
-        var lastErr string
-        for _, sourcePath := range candidates {
-            stdout, stderr, err := runCommand(ctx, bin, sourcePath)
-            if err != nil {
-                lastErr = bestErrorMessage(err, stderr, stdout)
-                continue
-            }
+		var lastErr string
+		for _, sourcePath := range candidates {
+			stdout, stderr, err := runCommand(ctx, bin, sourcePath)
+			if err != nil {
+				lastErr = bestErrorMessage(err, stderr, stdout)
+				continue
+			}
 
-            output := strings.TrimSpace(stdout)
-            if strings.TrimSpace(stderr) != "" {
-                if output != "" {
-                    output += "\n\n"
-                }
-                output += strings.TrimSpace(stderr)
-            }
-            if output == "" {
-                lastErr = fmt.Sprintf("mediainfo returned empty output for: %s", sourcePath)
-                continue
-            }
+			output := strings.TrimSpace(stdout)
+			if strings.TrimSpace(stderr) != "" {
+				if output != "" {
+					output += "\n\n"
+				}
+				output += strings.TrimSpace(stderr)
+			}
+			if output == "" {
+				lastErr = fmt.Sprintf("mediainfo returned empty output for: %s", sourcePath)
+				continue
+			}
 
-            writeJSON(w, http.StatusOK, infoResponse{OK: true, Output: output})
-            return
-        }
+			writeJSON(w, http.StatusOK, infoResponse{OK: true, Output: output})
+			return
+		}
 
-        if lastErr == "" {
-            lastErr = "mediainfo returned empty output"
-        }
-        writeError(w, http.StatusInternalServerError, lastErr)
-    }
+		if lastErr == "" {
+			lastErr = "mediainfo returned empty output"
+		}
+		writeError(w, http.StatusInternalServerError, lastErr)
+	}
 }
 
 func bdinfoHandler(envKey, fallback string) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        if !ensurePost(w, r) {
-            return
-        }
-        if err := parseForm(w, r); err != nil {
-            writeError(w, http.StatusBadRequest, err.Error())
-            return
-        }
-        defer cleanupMultipart(r)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !ensurePost(w, r) {
+			return
+		}
+		if err := parseForm(w, r); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		defer cleanupMultipart(r)
 
-        path, cleanup, err := inputPath(r)
-        if err != nil {
-            writeError(w, http.StatusBadRequest, err.Error())
-            return
-        }
-        defer cleanup()
+		path, cleanup, err := inputPath(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		defer cleanup()
 
-        bin, err := resolveBin(envKey, fallback)
-        if err != nil {
-            writeError(w, http.StatusBadRequest, err.Error())
-            return
-        }
+		bin, err := resolveBin(envKey, fallback)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 
-        ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
-        defer cancel()
+		ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+		defer cancel()
 
-        bdPath, bdCleanup, err := resolveBDInfoSource(ctx, path)
-        if err != nil {
-            writeError(w, http.StatusBadRequest, err.Error())
-            return
-        }
-        defer bdCleanup()
+		bdPath, bdCleanup, err := resolveBDInfoSource(ctx, path)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		defer bdCleanup()
 
-        stdout, stderr, err := runCommand(ctx, bin, bdPath)
-        if err != nil {
-            writeError(w, http.StatusInternalServerError, bestErrorMessage(err, stderr, stdout))
-            return
-        }
+		stdout, stderr, err := runCommand(ctx, bin, bdPath)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, bestErrorMessage(err, stderr, stdout))
+			return
+		}
 
-        output := strings.TrimSpace(stdout)
-        if strings.TrimSpace(stderr) != "" {
-            if output != "" {
-                output += "\n\n"
-            }
-            output += strings.TrimSpace(stderr)
-        }
+		output := strings.TrimSpace(stdout)
+		if strings.TrimSpace(stderr) != "" {
+			if output != "" {
+				output += "\n\n"
+			}
+			output += strings.TrimSpace(stderr)
+		}
 
-        writeJSON(w, http.StatusOK, infoResponse{OK: true, Output: output})
-    }
+		writeJSON(w, http.StatusOK, infoResponse{OK: true, Output: output})
+	}
 }
 
 func screenshotsHandler(w http.ResponseWriter, r *http.Request) {
-    if !ensurePost(w, r) {
-        return
-    }
-    if err := parseForm(w, r); err != nil {
-        writeError(w, http.StatusBadRequest, err.Error())
-        return
-    }
-    defer cleanupMultipart(r)
+	if !ensurePost(w, r) {
+		return
+	}
+	if err := parseForm(w, r); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer cleanupMultipart(r)
 
-    mode, err := parseScreenshotMode(r)
-    if err != nil {
-        writeError(w, http.StatusBadRequest, err.Error())
-        return
-    }
+	path, cleanup, err := inputPath(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer cleanup()
+	mode := requestedScreenshotMode(r.FormValue("mode"))
+	variant := requestedScreenshotVariant(r.FormValue("variant"))
 
-    path, cleanup, err := inputPath(r)
-    if err != nil {
-        writeError(w, http.StatusBadRequest, err.Error())
-        return
-    }
-    defer cleanup()
+	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
+	defer cancel()
 
-    ffprobe, err := resolveBin("FFPROBE_BIN", "ffprobe")
-    if err != nil {
-        writeError(w, http.StatusBadRequest, err.Error())
-        return
-    }
-    ffmpeg, err := resolveBin("FFMPEG_BIN", "ffmpeg")
-    if err != nil {
-        writeError(w, http.StatusBadRequest, err.Error())
-        return
-    }
+	tempDir, err := os.MkdirTemp("", "minfo-shots-*")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer os.RemoveAll(tempDir)
 
-    ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
-    defer cancel()
+	if mode == screenshotModeLinks {
+		output, err := runScreenshotUpload(ctx, path, tempDir, variant)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, infoResponse{OK: true, Output: output})
+		return
+	}
 
-    sourcePath, sourceCleanup, err := resolveScreenshotSource(ctx, path)
-    if err != nil {
-        writeError(w, http.StatusBadRequest, err.Error())
-        return
-    }
-    defer sourceCleanup()
+	files, err := runScreenshotScript(ctx, path, tempDir, variant)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
-    duration, err := probeDuration(ctx, ffprobe, sourcePath)
-    if err != nil {
-        writeError(w, http.StatusInternalServerError, err.Error())
-        return
-    }
+	zipBytes, err := zipFiles(files)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
-    tempDir, err := os.MkdirTemp("", "minfo-shots-*")
-    if err != nil {
-        writeError(w, http.StatusInternalServerError, err.Error())
-        return
-    }
-    defer os.RemoveAll(tempDir)
-
-    stamps := calcTimestamps(duration)
-    zipBytes, downloadName, err := buildScreenshotsZip(ctx, ffmpeg, sourcePath, stamps, tempDir, mode)
-    if err != nil {
-        writeError(w, http.StatusInternalServerError, err.Error())
-        return
-    }
-
-    w.Header().Set("Content-Type", "application/zip")
-    w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", downloadName))
-    w.WriteHeader(http.StatusOK)
-    if _, err := w.Write(zipBytes); err != nil {
-        log.Printf("write response: %v", err)
-    }
-}
-
-func parseScreenshotMode(r *http.Request) (string, error) {
-    mode := strings.ToLower(strings.TrimSpace(r.FormValue("screenshot_mode")))
-    switch mode {
-    case "", screenshotModeLossless:
-        return screenshotModeLossless, nil
-    case screenshotModeCompressed, "under10m", "10m":
-        return screenshotModeCompressed, nil
-    default:
-        return "", fmt.Errorf("unsupported screenshot mode: %s", mode)
-    }
-}
-
-func buildScreenshotsZip(ctx context.Context, ffmpeg, path string, stamps []float64, tempDir, mode string) ([]byte, string, error) {
-    switch mode {
-    case screenshotModeLossless:
-        files, err := captureShotsConcurrent(ctx, ffmpeg, path, stamps, tempDir, screenshotLosslessOptions())
-        if err != nil {
-            return nil, "", err
-        }
-        zipBytes, err := zipFiles(files)
-        if err != nil {
-            return nil, "", err
-        }
-        return zipBytes, "screenshots.zip", nil
-    case screenshotModeCompressed:
-        return buildCompressedScreenshotsZip(ctx, ffmpeg, path, stamps, tempDir)
-    default:
-        return nil, "", fmt.Errorf("unsupported screenshot mode: %s", mode)
-    }
-}
-
-func buildCompressedScreenshotsZip(ctx context.Context, ffmpeg, path string, stamps []float64, tempDir string) ([]byte, string, error) {
-    var lastSize int64
-    var lastFile string
-    var lastLabel string
-
-    for _, attempt := range screenshotCompressionAttempts() {
-        files, err := captureShotsConcurrent(ctx, ffmpeg, path, stamps, tempDir, screenshotJPEGOptions(attempt))
-        if err != nil {
-            return nil, "", err
-        }
-
-        maxSize, maxFile, err := largestScreenshotSize(files)
-        if err != nil {
-            return nil, "", err
-        }
-
-        lastSize = maxSize
-        lastFile = maxFile
-        lastLabel = attempt.label()
-        log.Printf("screenshot compression attempt %s -> max file %s (%s)", lastLabel, filepath.Base(lastFile), formatMiB(lastSize))
-        if lastSize < screenshotFileLimit10MiB {
-            zipBytes, err := zipFiles(files)
-            if err != nil {
-                return nil, "", err
-            }
-            return zipBytes, "screenshots-compressed.zip", nil
-        }
-    }
-
-    if lastSize == 0 {
-        return nil, "", errors.New("failed to build compressed screenshots")
-    }
-    return nil, "", fmt.Errorf("unable to compress each screenshot below 10 MiB; largest result was %s (%s, %s)", formatMiB(lastSize), filepath.Base(lastFile), lastLabel)
-}
-
-func screenshotLosslessOptions() screenshotCaptureOptions {
-    return screenshotCaptureOptions{Extension: "png"}
-}
-
-func screenshotJPEGOptions(attempt screenshotCompressionAttempt) screenshotCaptureOptions {
-    args := []string{
-        "-c:v", "mjpeg",
-        "-q:v", strconv.Itoa(attempt.Quality),
-    }
-    if attempt.Scale > 0 && attempt.Scale < 0.999 {
-        scale := fmt.Sprintf("scale=trunc(iw*%.2f/2)*2:trunc(ih*%.2f/2)*2", attempt.Scale, attempt.Scale)
-        args = append(args, "-vf", scale)
-    }
-    return screenshotCaptureOptions{
-        Extension:  "jpg",
-        OutputArgs: args,
-    }
-}
-
-func screenshotCompressionAttempts() []screenshotCompressionAttempt {
-    qualities := []int{2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30}
-    attempts := make([]screenshotCompressionAttempt, 0, len(qualities)+25)
-    for _, quality := range qualities {
-        attempts = append(attempts, screenshotCompressionAttempt{Quality: quality, Scale: 1})
-    }
-    for _, scale := range []float64{0.9, 0.8, 0.7, 0.6, 0.5} {
-        for _, quality := range []int{14, 18, 22, 26, 30} {
-            attempts = append(attempts, screenshotCompressionAttempt{Quality: quality, Scale: scale})
-        }
-    }
-    return attempts
-}
-
-func largestScreenshotSize(paths []string) (int64, string, error) {
-    var maxSize int64
-    var maxPath string
-
-    for _, path := range paths {
-        info, err := os.Stat(path)
-        if err != nil {
-            return 0, "", err
-        }
-        size := info.Size()
-        if size > maxSize || maxPath == "" {
-            maxSize = size
-            maxPath = path
-        }
-    }
-
-    return maxSize, maxPath, nil
-}
-
-func formatMiB(size int64) string {
-    return fmt.Sprintf("%.2f MiB", float64(size)/float64(1<<20))
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"screenshots.zip\"")
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(zipBytes); err != nil {
+		log.Printf("write response: %v", err)
+	}
 }
 
 func pathSuggestHandler(w http.ResponseWriter, r *http.Request) {
-    if r.Method != http.MethodGet {
-        writePathError(w, http.StatusMethodNotAllowed, "method not allowed")
-        return
-    }
+	if r.Method != http.MethodGet {
+		writePathError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
 
-    roots, err := resolveRoots(mediaRoots())
-    if err != nil {
-        writePathError(w, http.StatusBadRequest, err.Error())
-        return
-    }
-    prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
-    prefix = strings.Trim(prefix, "\"")
+	roots, err := resolveRoots(mediaRoots())
+	if err != nil {
+		writePathError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
+	prefix = strings.Trim(prefix, "\"")
 
-    items, root, err := suggestPaths(roots, prefix, maxSuggestions)
-    if err != nil {
-        writePathError(w, http.StatusBadRequest, err.Error())
-        return
-    }
+	items, root, err := suggestPaths(roots, prefix, maxSuggestions)
+	if err != nil {
+		writePathError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
-    writePathJSON(w, http.StatusOK, pathResponse{
-        OK:    true,
-        Root:  root,
-        Roots: roots,
-        Items: items,
-    })
-}
-
-func probeDuration(ctx context.Context, ffprobe, path string) (float64, error) {
-    stdout, stderr, err := runCommand(ctx, ffprobe,
-        "-v", "error",
-        "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1",
-        path,
-    )
-    if err != nil {
-        msg := strings.TrimSpace(stderr)
-        if msg == "" {
-            msg = err.Error()
-        }
-        return 0, fmt.Errorf("ffprobe failed: %s", msg)
-    }
-
-    value := strings.TrimSpace(stdout)
-    if value == "" {
-        return 0, errors.New("ffprobe returned empty duration")
-    }
-    duration, err := strconv.ParseFloat(value, 64)
-    if err != nil {
-        return 0, fmt.Errorf("invalid duration: %v", err)
-    }
-    if duration <= 0 {
-        return 0, errors.New("duration must be positive")
-    }
-    return duration, nil
-}
-
-func captureShot(ctx context.Context, ffmpeg, path string, seconds float64, outPath string, opts screenshotCaptureOptions) error {
-    if seconds < 0 {
-        seconds = 0
-    }
-    ts := formatFFmpegTimestamp(seconds)
-    args := []string{
-        "-hide_banner",
-        "-loglevel", "error",
-        "-y",
-        "-ss", ts,
-        "-skip_frame", "nokey",
-        "-i", path,
-        "-frames:v", "1",
-        "-an",
-    }
-    args = append(args, opts.OutputArgs...)
-    args = append(args, outPath)
-    stdout, stderr, err := runCommand(ctx, ffmpeg, args...)
-    if err == nil {
-        return nil
-    }
-
-    // Fallback: seek from a nearby point then decode a short window to hit the target.
-    const fallbackLead = 5.0
-    pre := seconds - fallbackLead
-    post := fallbackLead
-    if pre < 0 {
-        pre = 0
-        post = seconds
-    }
-    preTS := formatFFmpegTimestamp(pre)
-    postTS := formatFFmpegTimestamp(post)
-
-    fallbackArgs := []string{
-        "-hide_banner",
-        "-loglevel", "error",
-        "-y",
-        "-ss", preTS,
-        "-i", path,
-        "-ss", postTS,
-        "-t", "1",
-        "-frames:v", "1",
-        "-an",
-    }
-    fallbackArgs = append(fallbackArgs, opts.OutputArgs...)
-    fallbackArgs = append(fallbackArgs, outPath)
-    stdout2, stderr2, err2 := runCommand(ctx, ffmpeg, fallbackArgs...)
-    if err2 != nil {
-        msg := strings.TrimSpace(stderr2)
-        if msg == "" {
-            msg = err2.Error()
-        }
-        if strings.TrimSpace(stdout2) != "" {
-            msg += "\n" + strings.TrimSpace(stdout2)
-        }
-        fastMsg := strings.TrimSpace(stderr)
-        if fastMsg == "" {
-            fastMsg = err.Error()
-        }
-        if strings.TrimSpace(stdout) != "" {
-            fastMsg += "\n" + strings.TrimSpace(stdout)
-        }
-        return fmt.Errorf("ffmpeg failed after keyframe+fallback attempts: fast=%s ; fallback=%s", fastMsg, msg)
-    }
-    return nil
-}
-
-func formatFFmpegTimestamp(seconds float64) string {
-    if seconds < 0 {
-        seconds = 0
-    }
-
-    whole := int64(seconds)
-    ms := int64((seconds-float64(whole))*1000 + 0.5)
-    if ms >= 1000 {
-        whole++
-        ms -= 1000
-    }
-
-    h := whole / 3600
-    m := (whole % 3600) / 60
-    s := whole % 60
-    return fmt.Sprintf("%02d:%02d:%02d.%03d", h, m, s, ms)
-}
-
-func screenshotConcurrency() int {
-    return 4
-}
-
-func captureShotsConcurrent(ctx context.Context, ffmpeg, path string, stamps []float64, tempDir string, opts screenshotCaptureOptions) ([]string, error) {
-    if len(stamps) == 0 {
-        return nil, errors.New("no screenshot timestamps generated")
-    }
-
-    files := make([]string, 0, len(stamps))
-    for i := range stamps {
-        outPath := filepath.Join(tempDir, fmt.Sprintf("shot_%02d.%s", i+1, opts.Extension))
-        files = append(files, outPath)
-    }
-
-    runCtx, cancel := context.WithCancel(ctx)
-    defer cancel()
-
-    sem := make(chan struct{}, screenshotConcurrency())
-    var wg sync.WaitGroup
-    var once sync.Once
-    var firstErr error
-
-    setErr := func(err error) {
-        once.Do(func() {
-            firstErr = err
-            cancel()
-        })
-    }
-
-    for i, ts := range stamps {
-        i := i
-        ts := ts
-        outPath := files[i]
-        wg.Add(1)
-        go func() {
-            defer wg.Done()
-
-            select {
-            case sem <- struct{}{}:
-            case <-runCtx.Done():
-                return
-            }
-            defer func() { <-sem }()
-
-            if err := captureShot(runCtx, ffmpeg, path, ts, outPath, opts); err != nil {
-                setErr(err)
-            }
-        }()
-    }
-
-    wg.Wait()
-    if firstErr != nil {
-        return nil, firstErr
-    }
-
-    for _, file := range files {
-        if _, err := os.Stat(file); err != nil {
-            return nil, fmt.Errorf("screenshot output missing: %s", file)
-        }
-    }
-    return files, nil
-}
-
-func calcTimestamps(duration float64) []float64 {
-    const shots = 4
-    if duration <= 0 {
-        return nil
-    }
-
-    rng := rand.New(rand.NewSource(time.Now().UnixNano()))
-    ts := make([]float64, 0, shots)
-    used := make(map[int]bool, shots)
-
-    step := duration / float64(shots+1)
-    maxT := duration - 0.2
-    if maxT < 0 {
-        maxT = duration
-    }
-
-    for i := 0; i < shots; i++ {
-        base := step * float64(i+1)
-        if duration < 1 {
-            base = duration * (float64(i+1) / float64(shots+1))
-        }
-
-        jitter := step * 0.25
-        if jitter <= 0 {
-            jitter = duration * 0.05
-        }
-        t := base + (rng.Float64()*2-1)*jitter
-        if t > maxT {
-            t = maxT
-        }
-        if t < 0 {
-            t = 0
-        }
-
-        key := int(t * 1000)
-        for tries := 0; tries < 10 && used[key]; tries++ {
-            t += 0.137
-            if t > maxT {
-                t = maxT - 0.137
-            }
-            if t < 0 {
-                t = 0
-            }
-            key = int(t * 1000)
-        }
-        used[key] = true
-        ts = append(ts, t)
-    }
-
-    return ts
+	writePathJSON(w, http.StatusOK, pathResponse{
+		OK:    true,
+		Root:  root,
+		Roots: roots,
+		Items: items,
+	})
 }
 
 func suggestPaths(roots []string, prefix string, limit int) ([]string, string, error) {
-    if len(roots) == 0 {
-        return nil, "", errors.New("no MEDIA_ROOT configured")
-    }
-    resolvedRoots := roots
+	if len(roots) == 0 {
+		return nil, "", errors.New("no MEDIA_ROOT configured")
+	}
+	resolvedRoots := roots
 
-    if prefix == "" {
-        if len(resolvedRoots) == 1 {
-            items, err := listDir(resolvedRoots[0], "", limit)
-            return items, resolvedRoots[0], err
-        }
-        items := make([]string, 0, len(resolvedRoots))
-        for _, root := range resolvedRoots {
-            items = append(items, withDirSuffix(root))
-        }
-        return items, "", nil
-    }
+	if prefix == "" {
+		if len(resolvedRoots) == 1 {
+			items, err := listDir(resolvedRoots[0], "", limit)
+			return items, resolvedRoots[0], err
+		}
+		items := make([]string, 0, len(resolvedRoots))
+		for _, root := range resolvedRoots {
+			items = append(items, withDirSuffix(root))
+		}
+		return items, "", nil
+	}
 
-    cleaned := filepath.Clean(prefix)
-    selectedRoot := ""
-    var absPrefix string
-    if filepath.IsAbs(cleaned) {
-        absPrefix = cleaned
-        matchedRoot, ok := findContainingRoot(resolvedRoots, absPrefix)
-        if !ok {
-            return nil, "", errors.New("path is outside MEDIA_ROOTS")
-        }
-        selectedRoot = matchedRoot
-    } else {
-        if len(resolvedRoots) != 1 {
-            return nil, "", errors.New("relative path requires a single MEDIA_ROOT")
-        }
-        selectedRoot = resolvedRoots[0]
-        absPrefix = filepath.Join(selectedRoot, cleaned)
-    }
+	cleaned := filepath.Clean(prefix)
+	selectedRoot := ""
+	var absPrefix string
+	if filepath.IsAbs(cleaned) {
+		absPrefix = cleaned
+		matchedRoot, ok := findContainingRoot(resolvedRoots, absPrefix)
+		if !ok {
+			return nil, "", errors.New("path is outside MEDIA_ROOTS")
+		}
+		selectedRoot = matchedRoot
+	} else {
+		if len(resolvedRoots) != 1 {
+			return nil, "", errors.New("relative path requires a single MEDIA_ROOT")
+		}
+		selectedRoot = resolvedRoots[0]
+		absPrefix = filepath.Join(selectedRoot, cleaned)
+	}
 
-    sep := string(filepath.Separator)
-    if strings.HasSuffix(prefix, sep) || strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, "\\") {
-        if !isSubpath(selectedRoot, absPrefix) {
-            return nil, "", errors.New("path is outside MEDIA_ROOTS")
-        }
-        items, err := listDir(absPrefix, "", limit)
-        return items, selectedRoot, err
-    }
+	sep := string(filepath.Separator)
+	if strings.HasSuffix(prefix, sep) || strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, "\\") {
+		if !isSubpath(selectedRoot, absPrefix) {
+			return nil, "", errors.New("path is outside MEDIA_ROOTS")
+		}
+		items, err := listDir(absPrefix, "", limit)
+		return items, selectedRoot, err
+	}
 
-    dir := filepath.Dir(absPrefix)
-    base := filepath.Base(absPrefix)
-    if !isSubpath(selectedRoot, dir) {
-        return nil, "", errors.New("path is outside MEDIA_ROOTS")
-    }
-    items, err := listDir(dir, base, limit)
-    return items, selectedRoot, err
+	dir := filepath.Dir(absPrefix)
+	base := filepath.Base(absPrefix)
+	if !isSubpath(selectedRoot, dir) {
+		return nil, "", errors.New("path is outside MEDIA_ROOTS")
+	}
+	items, err := listDir(dir, base, limit)
+	return items, selectedRoot, err
 }
 
 func resolveRoots(roots []string) ([]string, error) {
-    resolved := make([]string, 0, len(roots))
-    seen := make(map[string]struct{}, len(roots))
-    for _, root := range roots {
-        clean := filepath.Clean(strings.TrimSpace(root))
-        if clean == "" {
-            continue
-        }
-        absRoot, err := filepath.Abs(clean)
-        if err != nil {
-            return nil, err
-        }
-        if _, ok := seen[absRoot]; ok {
-            continue
-        }
-        seen[absRoot] = struct{}{}
-        resolved = append(resolved, absRoot)
-    }
-    if len(resolved) == 0 {
-        return nil, errors.New("no MEDIA_ROOT configured")
-    }
-    return resolved, nil
+	resolved := make([]string, 0, len(roots))
+	seen := make(map[string]struct{}, len(roots))
+	for _, root := range roots {
+		clean := filepath.Clean(strings.TrimSpace(root))
+		if clean == "" {
+			continue
+		}
+		absRoot, err := filepath.Abs(clean)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := seen[absRoot]; ok {
+			continue
+		}
+		seen[absRoot] = struct{}{}
+		resolved = append(resolved, absRoot)
+	}
+	if len(resolved) == 0 {
+		return nil, errors.New("no MEDIA_ROOT configured")
+	}
+	return resolved, nil
 }
 
 func findContainingRoot(roots []string, path string) (string, bool) {
-    best := ""
-    for _, root := range roots {
-        if !isSubpath(root, path) {
-            continue
-        }
-        if len(root) > len(best) {
-            best = root
-        }
-    }
-    if best == "" {
-        return "", false
-    }
-    return best, true
+	best := ""
+	for _, root := range roots {
+		if !isSubpath(root, path) {
+			continue
+		}
+		if len(root) > len(best) {
+			best = root
+		}
+	}
+	if best == "" {
+		return "", false
+	}
+	return best, true
 }
 
 func withDirSuffix(path string) string {
-    if strings.HasSuffix(path, string(filepath.Separator)) {
-        return path
-    }
-    return path + string(filepath.Separator)
+	if strings.HasSuffix(path, string(filepath.Separator)) {
+		return path
+	}
+	return path + string(filepath.Separator)
 }
 
 func listDir(dir, base string, limit int) ([]string, error) {
-    entries, err := os.ReadDir(dir)
-    if err != nil {
-        return nil, err
-    }
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
 
-    baseLower := strings.ToLower(base)
-    items := make([]string, 0, len(entries))
-    for _, entry := range entries {
-        name := entry.Name()
-        if baseLower != "" && !strings.Contains(strings.ToLower(name), baseLower) {
-            continue
-        }
-        full := filepath.Join(dir, name)
-        if entry.IsDir() {
-            full += string(filepath.Separator)
-        }
-        items = append(items, full)
-        if limit > 0 && len(items) >= limit {
-            break
-        }
-    }
+	baseLower := strings.ToLower(base)
+	items := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		name := entry.Name()
+		if baseLower != "" && !strings.Contains(strings.ToLower(name), baseLower) {
+			continue
+		}
+		full := filepath.Join(dir, name)
+		if entry.IsDir() {
+			full += string(filepath.Separator)
+		}
+		items = append(items, full)
+		if limit > 0 && len(items) >= limit {
+			break
+		}
+	}
 
-    return items, nil
+	return items, nil
 }
 
 func isSubpath(root, path string) bool {
-    rel, err := filepath.Rel(root, path)
-    if err != nil {
-        return false
-    }
-    return rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..")
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (!strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "..")
 }
