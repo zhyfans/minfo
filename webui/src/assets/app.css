@@ -298,6 +298,28 @@ input[type="text"] {
   gap: 12px;
 }
 
+.action-btn {
+  min-width: 148px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.action-btn.loading {
+  position: relative;
+}
+
+.action-btn-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: rgba(255, 255, 255, 0.95);
+  animation: spin 0.8s linear infinite;
+}
+
 .variant-picker {
   display: flex;
   flex-wrap: wrap;

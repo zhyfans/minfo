@@ -41,9 +41,10 @@
                 </div>
                 <ActionButtons
                     :busy="busy"
+                    :active-action="activeAction"
                     :has-input="hasInput"
-                    @mediainfo="runInfo('/api/mediainfo', 'MediaInfo')"
-                    @bdinfo="runInfo('/api/bdinfo', 'BDInfo', { bdinfo_mode: bdinfoMode })"
+                    @mediainfo="runInfo('/api/mediainfo', 'MediaInfo', {}, 'mediainfo')"
+                    @bdinfo="runInfo('/api/bdinfo', 'BDInfo', { bdinfo_mode: bdinfoMode }, 'bdinfo')"
                     @download-shots="downloadShots"
                     @output-links="outputShotLinks"
                 />
@@ -110,6 +111,7 @@ const {
     outputText,
     linkItems,
     busy,
+    activeAction,
     linkStatusText,
     copyOutputLabel,
     copyLinksLabel,

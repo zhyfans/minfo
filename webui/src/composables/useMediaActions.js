@@ -6,6 +6,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
     const outputText = ref(typeof options.initialOutputText === "string" ? options.initialOutputText : "");
     const linkItems = ref(normalizeOutputLinks(options.initialLinkItems));
     const busy = ref(false);
+    const activeAction = ref("");
     const statusMessage = ref("");
     const linkStatusText = ref("");
     const copyOutputStatus = ref("");
@@ -15,8 +16,9 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
     const copyLinksLabel = computed(() => copyLinksStatus.value || "复制链接");
     const copyBBCodeLabel = computed(() => copyBBCodeStatus.value || "复制 BBCode");
 
-    const setBusy = (isBusy, label) => {
+    const setBusy = (isBusy, label, action = "") => {
         busy.value = isBusy;
+        activeAction.value = isBusy ? action : "";
         statusMessage.value = isBusy ? label || "" : "";
     };
 
@@ -36,13 +38,13 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
         setLinkStatusText(`错误：${message}`);
     };
 
-    const runInfo = async (url, label, fields = {}) => {
+    const runInfo = async (url, label, fields = {}, action = "") => {
         if (!hasInput.value) {
             errorOutput("请先选择媒体路径。");
             return;
         }
         try {
-            setBusy(true, `${label} 生成中...`);
+            setBusy(true, `${label} 生成中...`, action);
             const data = await requestInfo(path.value.trim(), url, fields);
             setOutputText(data.output || "没有输出。");
         } catch (err) {
@@ -58,7 +60,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
             return;
         }
         try {
-            setBusy(true, "正在生成截图...");
+            setBusy(true, "正在生成截图...", "download-shots");
             const blob = await requestScreenshotZip(path.value.trim(), screenshotVariant.value);
             saveBlob(blob, "screenshots.zip");
             setOutputText("截图已下载为 screenshots.zip。");
@@ -75,7 +77,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
             return;
         }
         try {
-            setBusy(true);
+            setBusy(true, "", "output-links");
             linkItems.value = [];
             setLinkStatusText("正在生成截图并上传...");
             const data = await requestScreenshotLinks(path.value.trim(), screenshotVariant.value);
@@ -225,6 +227,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
         outputText,
         linkItems,
         busy,
+        activeAction,
         linkStatusText,
         copyOutputLabel,
         copyLinksLabel,
