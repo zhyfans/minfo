@@ -10,11 +10,35 @@ export function saveBlob(blob, filename) {
 }
 
 export async function copyText(text) {
-    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
-        throw new Error("当前环境不支持剪贴板写入。");
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        try {
+            await navigator.clipboard.writeText(text);
+            return;
+        } catch {}
     }
 
-    await navigator.clipboard.writeText(text);
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.top = "0";
+    textarea.style.left = "-9999px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, textarea.value.length);
+
+    let copied = false;
+    try {
+        copied = document.execCommand("copy");
+    } finally {
+        textarea.remove();
+    }
+
+    if (!copied) {
+        throw new Error("当前环境不支持剪贴板写入。");
+    }
 }
 
 export function extractDirectLinks(text) {

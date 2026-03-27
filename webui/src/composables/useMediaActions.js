@@ -12,6 +12,8 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
     const copyOutputStatus = ref("");
     const copyLinksStatus = ref("");
     const copyBBCodeStatus = ref("");
+    const noticeText = ref("");
+    let noticeTimer = null;
     const copyOutputLabel = computed(() => copyOutputStatus.value || "复制输出");
     const copyLinksLabel = computed(() => copyLinksStatus.value || "复制链接");
     const copyBBCodeLabel = computed(() => copyBBCodeStatus.value || "复制 BBCode");
@@ -30,17 +32,20 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
         linkStatusText.value = typeof text === "string" ? text : "";
     };
 
-    const errorOutput = (message) => {
-        setOutputText(`错误：${message}`);
-    };
-
-    const errorLinkOutput = (message) => {
-        setLinkStatusText(`错误：${message}`);
+    const showNotice = (message) => {
+        noticeText.value = typeof message === "string" ? message : "";
+        if (noticeTimer) {
+            clearTimeout(noticeTimer);
+        }
+        noticeTimer = setTimeout(() => {
+            noticeText.value = "";
+            noticeTimer = null;
+        }, 2400);
     };
 
     const runInfo = async (url, label, fields = {}, action = "") => {
         if (!hasInput.value) {
-            errorOutput("请先选择媒体路径。");
+            showNotice("请先选择媒体路径。");
             return;
         }
         try {
@@ -48,7 +53,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
             const data = await requestInfo(path.value.trim(), url, fields);
             setOutputText(data.output || "没有输出。");
         } catch (err) {
-            errorOutput(err?.message || "请求失败。");
+            showNotice(err?.message || "请求失败。");
         } finally {
             setBusy(false);
         }
@@ -56,7 +61,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
 
     const downloadShots = async () => {
         if (!hasInput.value) {
-            errorOutput("请先选择媒体路径。");
+            showNotice("请先选择媒体路径。");
             return;
         }
         try {
@@ -65,7 +70,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
             saveBlob(blob, "screenshots.zip");
             setOutputText("截图已下载为 screenshots.zip。");
         } catch (err) {
-            errorOutput(err?.message || "截图请求失败。");
+            showNotice(err?.message || "截图请求失败。");
         } finally {
             setBusy(false);
         }
@@ -73,7 +78,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
 
     const outputShotLinks = async () => {
         if (!hasInput.value) {
-            errorLinkOutput("请先选择媒体路径。");
+            showNotice("请先选择媒体路径。");
             return;
         }
         try {
@@ -100,7 +105,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
 
             setLinkStatusText(output || "没有返回图床链接。");
         } catch (err) {
-            errorLinkOutput(err?.message || "图床链接请求失败。");
+            showNotice(err?.message || "图床链接请求失败。");
         } finally {
             setBusy(false);
         }
@@ -108,7 +113,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
 
     const appendShotLinks = async () => {
         if (!hasInput.value) {
-            errorLinkOutput("请先选择媒体路径。");
+            showNotice("请先选择媒体路径。");
             return;
         }
         try {
@@ -134,7 +139,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
 
             setLinkStatusText(output || "没有返回图床链接。");
         } catch (err) {
-            errorLinkOutput(err?.message || "图床链接请求失败。");
+            showNotice(err?.message || "图床链接请求失败。");
         } finally {
             setBusy(false);
         }
@@ -158,7 +163,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
     const copyOutputText = async () => {
         const text = buildCopyText(outputText.value, []);
         if (text.trim() === "") {
-            errorOutput("没有可复制的内容。");
+            showNotice("没有可复制的内容。");
             return;
         }
 
@@ -169,14 +174,14 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
                 copyOutputStatus.value = "";
             }, 1200);
         } catch (err) {
-            errorOutput(err?.message || "复制失败。");
+            showNotice(err?.message || "复制失败。");
         }
     };
 
     const copyLinks = async () => {
         const text = buildLinkText(linkItems.value);
         if (text.trim() === "") {
-            errorLinkOutput("没有可复制的链接。");
+            showNotice("没有可复制的链接。");
             return;
         }
 
@@ -187,14 +192,14 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
                 copyLinksStatus.value = "";
             }, 1200);
         } catch (err) {
-            errorLinkOutput(err?.message || "复制链接失败。");
+            showNotice(err?.message || "复制链接失败。");
         }
     };
 
     const copyBBCode = async () => {
         const text = buildBBCodeText(linkItems.value);
         if (text.trim() === "") {
-            errorLinkOutput("没有可复制的 BBCode。");
+            showNotice("没有可复制的 BBCode。");
             return;
         }
 
@@ -205,7 +210,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
                 copyBBCodeStatus.value = "";
             }, 1200);
         } catch (err) {
-            errorLinkOutput(err?.message || "复制 BBCode 失败。");
+            showNotice(err?.message || "复制 BBCode 失败。");
         }
     };
 
@@ -228,6 +233,7 @@ export function useMediaActions(path, screenshotVariant, hasInput, options = {})
         linkItems,
         busy,
         activeAction,
+        noticeText,
         linkStatusText,
         copyOutputLabel,
         copyLinksLabel,

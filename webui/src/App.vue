@@ -1,6 +1,7 @@
 <template>
     <div class="grain"></div>
     <main class="shell">
+        <NoticeToast :text="noticeText" />
         <AppHeader />
 
         <section class="panel">
@@ -74,6 +75,7 @@ import ActionButtons from "./components/ActionButtons.vue";
 import AppHeader from "./components/AppHeader.vue";
 import BDInfoOutputPicker from "./components/BDInfoOutputPicker.vue";
 import ImageLinksPanel from "./components/ImageLinksPanel.vue";
+import NoticeToast from "./components/NoticeToast.vue";
 import OutputPanel from "./components/OutputPanel.vue";
 import PathBrowser from "./components/PathBrowser.vue";
 import ScreenshotVariantPicker from "./components/ScreenshotVariantPicker.vue";
@@ -112,6 +114,7 @@ const {
     linkItems,
     busy,
     activeAction,
+    noticeText,
     linkStatusText,
     copyOutputLabel,
     copyLinksLabel,
