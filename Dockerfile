@@ -94,18 +94,18 @@ RUN apk add --no-cache \
     coreutils
 
 RUN set -eux; \
-    mkdir -p /opt/minfo/scripts; \
-    curl -fsSL "$SCREENSHOT_AUTO_URL" -o /opt/minfo/scripts/AutoScreenshot.sh; \
-    curl -fsSL "$SCREENSHOT_UPLOAD_URL" -o /opt/minfo/scripts/PixhostUpload.sh; \
-    curl -fsSL "$SCREENSHOT_PNG_URL" -o /opt/minfo/scripts/screenshots.sh; \
-    curl -fsSL "$SCREENSHOT_FAST_URL" -o /opt/minfo/scripts/screenshots_fast.sh; \
-    curl -fsSL "$SCREENSHOT_JPG_URL" -o /opt/minfo/scripts/screenshots_jpg.sh; \
-    sed -i 's#bash <(curl -s https://raw.githubusercontent.com/guyuanwind/Seedbox/refs/heads/main/screenshots_jpg.sh)#bash /opt/minfo/scripts/screenshots_jpg.sh#g' /opt/minfo/scripts/AutoScreenshot.sh; \
-    sed -i 's#bash <(curl -s https://raw.githubusercontent.com/guyuanwind/Seedbox/refs/heads/main/screenshots_fast.sh)#bash /opt/minfo/scripts/screenshots_fast.sh#g' /opt/minfo/scripts/AutoScreenshot.sh; \
-    sed -i 's#bash <(curl -s https://raw.githubusercontent.com/guyuanwind/Seedbox/refs/heads/main/screenshots.sh)#bash /opt/minfo/scripts/screenshots.sh#g' /opt/minfo/scripts/AutoScreenshot.sh; \
-    sed -i 's#bash <(curl -s https://raw.githubusercontent.com/guyuanwind/Seedbox/refs/heads/main/PixhostUpload.sh)#bash /opt/minfo/scripts/PixhostUpload.sh#g' /opt/minfo/scripts/AutoScreenshot.sh; \
+    mkdir -p /usr/local/share/minfo/scripts; \
+    curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL "$SCREENSHOT_AUTO_URL" -o /usr/local/share/minfo/scripts/AutoScreenshot.sh; \
+    curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL "$SCREENSHOT_UPLOAD_URL" -o /usr/local/share/minfo/scripts/PixhostUpload.sh; \
+    curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL "$SCREENSHOT_PNG_URL" -o /usr/local/share/minfo/scripts/screenshots.sh; \
+    curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL "$SCREENSHOT_FAST_URL" -o /usr/local/share/minfo/scripts/screenshots_fast.sh; \
+    curl --retry 5 --retry-delay 2 --retry-all-errors -fsSL "$SCREENSHOT_JPG_URL" -o /usr/local/share/minfo/scripts/screenshots_jpg.sh; \
+    sed -i 's#bash <(curl -s https://raw.githubusercontent.com/guyuanwind/Seedbox/refs/heads/main/screenshots_jpg.sh)#bash /usr/local/share/minfo/scripts/screenshots_jpg.sh#g' /usr/local/share/minfo/scripts/AutoScreenshot.sh; \
+    sed -i 's#bash <(curl -s https://raw.githubusercontent.com/guyuanwind/Seedbox/refs/heads/main/screenshots_fast.sh)#bash /usr/local/share/minfo/scripts/screenshots_fast.sh#g' /usr/local/share/minfo/scripts/AutoScreenshot.sh; \
+    sed -i 's#bash <(curl -s https://raw.githubusercontent.com/guyuanwind/Seedbox/refs/heads/main/screenshots.sh)#bash /usr/local/share/minfo/scripts/screenshots.sh#g' /usr/local/share/minfo/scripts/AutoScreenshot.sh; \
+    sed -i 's#bash <(curl -s https://raw.githubusercontent.com/guyuanwind/Seedbox/refs/heads/main/PixhostUpload.sh)#bash /usr/local/share/minfo/scripts/PixhostUpload.sh#g' /usr/local/share/minfo/scripts/AutoScreenshot.sh; \
     printf '#!/bin/sh\nexec "$@"\n' > /usr/local/bin/sudo; \
-    chmod +x /usr/local/bin/sudo /opt/minfo/scripts/*.sh
+    chmod +x /usr/local/bin/sudo /usr/local/share/minfo/scripts/*.sh
 
 COPY --from=build /out/minfo /usr/local/bin/minfo
 COPY --from=bdinfo-build /out/bdinfo/BDInfo /opt/bdinfo/BDInfo
@@ -144,12 +144,12 @@ RUN apk add --no-cache \
 
 RUN GOBIN=/usr/local/bin go install github.com/go-delve/delve/cmd/dlv@latest
 
-COPY --from=runtime /opt/minfo/scripts /opt/minfo/scripts
+COPY --from=runtime /usr/local/share/minfo/scripts /usr/local/share/minfo/scripts
 COPY --from=runtime /opt/bdinfo /opt/bdinfo
 COPY --from=runtime /usr/local/bin/bdinfo /usr/local/bin/bdinfo
 COPY --from=runtime /usr/local/bin/sudo /usr/local/bin/sudo
 
-RUN chmod +x /usr/local/bin/dlv /usr/local/bin/bdinfo /usr/local/bin/sudo /opt/bdinfo/BDInfo /opt/minfo/scripts/*.sh
+RUN chmod +x /usr/local/bin/dlv /usr/local/bin/bdinfo /usr/local/bin/sudo /opt/bdinfo/BDInfo /usr/local/share/minfo/scripts/*.sh
 
 ENV BDINFO_BIN=/usr/local/bin/bdinfo
 ENV LANG=C.UTF-8

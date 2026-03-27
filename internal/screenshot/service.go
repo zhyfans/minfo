@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -16,7 +17,7 @@ import (
 	"minfo/internal/system"
 )
 
-const screenshotScriptDir = "/opt/minfo/scripts"
+const screenshotScriptDir = "/usr/local/share/minfo/scripts"
 const screenshotCount = 4
 
 const (
@@ -87,7 +88,8 @@ func resolveScript(envKey, fallbackName string) (string, error) {
 	if err == nil && !info.IsDir() {
 		return candidate, nil
 	}
-	return "", fmt.Errorf("%s not found in %s; set %s to override", fallbackName, screenshotScriptDir, envKey)
+
+	return "", fmt.Errorf("%s not found in %s; rebuild the image or set %s to override", fallbackName, screenshotScriptDir, envKey)
 }
 
 func RunScript(ctx context.Context, inputPath, outputDir, variant string) ([]string, error) {
@@ -176,21 +178,69 @@ func randomScreenshotTimestamps(ctx context.Context, inputPath string, count int
 }
 
 func probeMediaDuration(ctx context.Context, ffprobe, path string) (float64, error) {
-	stdout, stderr, err := system.RunCommand(ctx, ffprobe,
+	stdout, stderr, err := runFFprobeDuration(ctx, ffprobe, path, "format=duration")
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe format duration probe failed: %s", system.BestErrorMessage(err, stderr, stdout))
+	}
+
+	duration, parseErr := parseDurationOutput(stdout)
+	if parseErr == nil {
+		return duration, nil
+	}
+
+	stdout, stderr, err = runFFprobeDuration(ctx, ffprobe, path, "stream=duration")
+	if err != nil {
+		return 0, fmt.Errorf("ffprobe format duration unavailable (%v); stream duration probe failed: %s", parseErr, system.BestErrorMessage(err, stderr, stdout))
+	}
+
+	duration, streamErr := parseDurationOutput(stdout)
+	if streamErr == nil {
+		return duration, nil
+	}
+
+	return 0, fmt.Errorf("ffprobe returned unusable duration: format probe (%v); stream probe (%v)", parseErr, streamErr)
+}
+
+func runFFprobeDuration(ctx context.Context, ffprobe, path, entries string) (string, string, error) {
+	return system.RunCommand(ctx, ffprobe,
 		"-v", "error",
-		"-show_entries", "format=duration",
+		"-show_entries", entries,
 		"-of", "default=noprint_wrappers=1:nokey=1",
 		path,
 	)
-	if err != nil {
-		return 0, fmt.Errorf("ffprobe failed: %s", system.BestErrorMessage(err, stderr, stdout))
+}
+
+func parseDurationOutput(output string) (float64, error) {
+	lines := strings.Split(output, "\n")
+	best := 0.0
+	found := false
+	invalid := make([]string, 0, len(lines))
+
+	for _, line := range lines {
+		value := strings.TrimSpace(line)
+		if value == "" {
+			continue
+		}
+
+		duration, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(duration) || math.IsInf(duration, 0) || duration <= 0 {
+			invalid = append(invalid, value)
+			continue
+		}
+
+		if !found || duration > best {
+			best = duration
+			found = true
+		}
 	}
 
-	value := strings.TrimSpace(stdout)
-	if value == "" {
+	if found {
+		return best, nil
+	}
+	if len(invalid) == 0 {
 		return 0, errors.New("ffprobe returned empty duration")
 	}
-	return strconv.ParseFloat(value, 64)
+	return 0, fmt.Errorf("ffprobe returned invalid duration values: %s", strings.Join(invalid, ", "))
 }
 
 func buildRandomTimestampSeconds(duration float64, count int) []int {

@@ -10,8 +10,10 @@ import {
     withTrailingSeparator,
 } from "../utils/path-browser";
 
-export function usePathBrowser() {
-    const path = ref("");
+export function usePathBrowser(options = {}) {
+    const initialPath = typeof options.initialPath === "string" ? options.initialPath : "";
+    const initialBrowserDir = typeof options.initialBrowserDir === "string" ? options.initialBrowserDir : "";
+    const path = ref(initialPath);
     const browserRoots = ref([]);
     const browserRoot = ref("");
     const browserDir = ref("");
@@ -92,7 +94,12 @@ export function usePathBrowser() {
     };
 
     onMounted(async () => {
-        await loadDirectory("");
+        const preferredDirectory = initialBrowserDir.trim();
+        await loadDirectory(preferredDirectory);
+
+        if (preferredDirectory !== "" && browserError.value !== "") {
+            await loadDirectory("");
+        }
     });
 
     onBeforeUnmount(() => {

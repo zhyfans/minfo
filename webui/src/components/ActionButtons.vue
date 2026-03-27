@@ -3,7 +3,7 @@
         <button :disabled="busy || !hasInput" @click="$emit('mediainfo')">生成 MediaInfo</button>
         <button :disabled="busy || !hasInput" @click="$emit('bdinfo')">生成 BDInfo</button>
         <button :disabled="busy || !hasInput" @click="$emit('download-shots')">下载 4 张截图</button>
-        <button :disabled="busy || !hasInput" @click="$emit('output-links')">输出图床链接</button>
+        <button :disabled="busy || !hasInput" @click="$emit('output-links')">生成图床链接</button>
     </div>
 </template>
 

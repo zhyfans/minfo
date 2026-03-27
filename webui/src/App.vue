@@ -33,29 +33,45 @@
             />
         </section>
 
-        <OutputPanel
+        <OutputPanel :busy="busy" :copy-output-label="copyOutputLabel" :output-text="outputText" :status-message="statusMessage" @copy="copyOutputText" @clear="clearOutputText" />
+
+        <ImageLinksPanel
             :busy="busy"
-            :copy-label="copyLabel"
-            :output="output"
-            @copy="copyOutput"
-            @clear="clearOutput"
+            :copy-links-label="copyLinksLabel"
+            :copy-b-b-code-label="copyBBCodeLabel"
+            :link-status-text="linkStatusText"
+            :link-items="linkItems"
+            @append-links="appendShotLinks"
+            @copy-links="copyLinks"
+            @copy-bbcode="copyBBCode"
+            @clear="clearLinkItems"
+            @remove-link="removeLink"
         />
     </main>
 </template>
 
 <script setup>
-import { ref } from "vue";
+import { ref, watch } from "vue";
 import ActionButtons from "./components/ActionButtons.vue";
 import AppHeader from "./components/AppHeader.vue";
+import ImageLinksPanel from "./components/ImageLinksPanel.vue";
 import OutputPanel from "./components/OutputPanel.vue";
 import PathBrowser from "./components/PathBrowser.vue";
 import ScreenshotVariantPicker from "./components/ScreenshotVariantPicker.vue";
 import { useMediaActions } from "./composables/useMediaActions";
 import { usePathBrowser } from "./composables/usePathBrowser";
+import { loadAppState, saveAppState } from "./utils/storage";
 
-const screenshotVariant = ref("png");
-const pathBrowser = usePathBrowser();
-const mediaActions = useMediaActions(pathBrowser.path, screenshotVariant, pathBrowser.hasInput);
+const persistedState = loadAppState();
+const screenshotVariant = ref(persistedState.screenshotVariant);
+const pathBrowser = usePathBrowser({
+    initialPath: persistedState.path,
+    initialBrowserDir: persistedState.browserDir,
+});
+const mediaActions = useMediaActions(pathBrowser.path, screenshotVariant, pathBrowser.hasInput, {
+    initialOutputText: persistedState.outputText,
+    initialLinkItems: persistedState.linkItems,
+});
 
 const {
     path,
@@ -71,5 +87,38 @@ const {
     handleEntryDoubleClick,
 } = pathBrowser;
 
-const { output, busy, copyLabel, runInfo, downloadShots, outputShotLinks, clearOutput, copyOutput } = mediaActions;
+const {
+    outputText,
+    linkItems,
+    busy,
+    linkStatusText,
+    copyOutputLabel,
+    copyLinksLabel,
+    copyBBCodeLabel,
+    statusMessage,
+    runInfo,
+    downloadShots,
+    outputShotLinks,
+    appendShotLinks,
+    clearOutputText,
+    clearLinkItems,
+    copyOutputText,
+    copyLinks,
+    copyBBCode,
+    removeLink,
+} = mediaActions;
+
+watch(
+    [path, browserDir, screenshotVariant, outputText, linkItems],
+    ([nextPath, nextBrowserDir, nextVariant, nextOutputText, nextLinkItems]) => {
+        saveAppState({
+            path: nextPath,
+            browserDir: nextBrowserDir,
+            screenshotVariant: nextVariant,
+            outputText: nextOutputText,
+            linkItems: nextLinkItems,
+        });
+    },
+    { deep: true, immediate: true },
+);
 </script>
