@@ -1,13 +1,9 @@
-import { normalizeOutputLinks } from "./output";
-
 const STORAGE_KEY = "minfo:webui:state:v1";
 const DEFAULT_STATE = {
     path: "",
     browserDir: "",
     screenshotVariant: "png",
     bdinfoMode: "code",
-    outputText: "",
-    linkItems: [],
 };
 
 export function loadAppState() {
@@ -45,8 +41,6 @@ function normalizeState(value) {
         browserDir: typeof source.browserDir === "string" ? source.browserDir : DEFAULT_STATE.browserDir,
         screenshotVariant: normalizeVariant(source.screenshotVariant),
         bdinfoMode: normalizeBDInfoMode(source.bdinfoMode),
-        outputText: typeof source.outputText === "string" ? source.outputText : DEFAULT_STATE.outputText,
-        linkItems: normalizeOutputLinks(source.linkItems),
     };
 }
 

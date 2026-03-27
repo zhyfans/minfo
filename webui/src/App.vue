@@ -52,9 +52,18 @@
             </div>
         </section>
 
-        <OutputPanel :busy="busy" :copy-output-label="copyOutputLabel" :output-text="outputText" :status-message="statusMessage" @copy="copyOutputText" @clear="clearOutputText" />
+        <OutputPanel
+            v-if="showOutputPanel"
+            :busy="busy"
+            :copy-output-label="copyOutputLabel"
+            :output-text="outputText"
+            :status-message="statusMessage"
+            @copy="copyOutputText"
+            @clear="clearOutputText"
+        />
 
         <ImageLinksPanel
+            v-if="showImageLinksPanel"
             :busy="busy"
             :copy-links-label="copyLinksLabel"
             :copy-b-b-code-label="copyBBCodeLabel"
@@ -90,10 +99,7 @@ const pathBrowser = usePathBrowser({
     initialPath: persistedState.path,
     initialBrowserDir: persistedState.browserDir,
 });
-const mediaActions = useMediaActions(pathBrowser.path, screenshotVariant, pathBrowser.hasInput, {
-    initialOutputText: persistedState.outputText,
-    initialLinkItems: persistedState.linkItems,
-});
+const mediaActions = useMediaActions(pathBrowser.path, screenshotVariant, pathBrowser.hasInput);
 
 const {
     path,
@@ -120,6 +126,8 @@ const {
     copyLinksLabel,
     copyBBCodeLabel,
     statusMessage,
+    showOutputPanel,
+    showImageLinksPanel,
     runInfo,
     downloadShots,
     outputShotLinks,
@@ -133,15 +141,13 @@ const {
 } = mediaActions;
 
 watch(
-    [path, browserDir, screenshotVariant, bdinfoMode, outputText, linkItems],
-    ([nextPath, nextBrowserDir, nextVariant, nextBDInfoMode, nextOutputText, nextLinkItems]) => {
+    [path, browserDir, screenshotVariant, bdinfoMode],
+    ([nextPath, nextBrowserDir, nextVariant, nextBDInfoMode]) => {
         saveAppState({
             path: nextPath,
             browserDir: nextBrowserDir,
             screenshotVariant: nextVariant,
             bdinfoMode: nextBDInfoMode,
-            outputText: nextOutputText,
-            linkItems: nextLinkItems,
         });
     },
     { deep: true, immediate: true },
