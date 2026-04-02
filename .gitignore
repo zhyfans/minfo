@@ -3,7 +3,9 @@
 /webui/node_modules/
 /webui/.vite/
 /webui/dist/
+.codex
 .gocache
 .env
 __debug_bin*
-/test-media
+/test-media/*
+!/test-media/.gitkeep
