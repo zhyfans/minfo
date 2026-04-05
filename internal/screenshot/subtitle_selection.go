@@ -25,19 +25,75 @@ func (r *screenshotRunner) chooseSubtitle() {
 
 	if selection, ok := r.findExternalSubtitle(); ok {
 		r.subtitle = selection
-		r.logSelectedSubtitleSummary()
 		r.logSubtitleFallback("外挂")
 		return
 	}
 
 	if selection, ok := r.pickInternalSubtitle(); ok {
 		r.subtitle = selection
-		r.logSelectedSubtitleSummary()
 		r.logSubtitleFallback("内挂")
 		return
 	}
 
 	r.logf("[提示] 未找到可用字幕，将仅截图视频画面。")
+}
+
+// prepareTextSubtitleRenderSource 会把需要兼容处理的内封文字字幕提取成临时 SRT 文件，复用 shell 的稳定渲染路径。
+func (r *screenshotRunner) prepareTextSubtitleRenderSource() error {
+	if r.subtitle.Mode != "internal" {
+		return nil
+	}
+	if r.isSupportedBitmapSubtitle() {
+		return nil
+	}
+	if isASSLikeTextSubtitleCodec(r.subtitle.Codec) {
+		r.logf("[信息] 内挂 ASS/SSA 字幕将直接使用原始字幕流，保留原样式与字号。")
+		return nil
+	}
+
+	tempFile, err := os.CreateTemp("", "minfo-sub-*.srt")
+	if err != nil {
+		return err
+	}
+	tempPath := tempFile.Name()
+	if closeErr := tempFile.Close(); closeErr != nil {
+		_ = os.Remove(tempPath)
+		return closeErr
+	}
+
+	stdout, stderr, err := system.RunCommand(r.ctx, r.ffmpegBin,
+		"-v", "error",
+		"-i", r.sourcePath,
+		"-map", fmt.Sprintf("0:s:%d", r.subtitle.RelativeIndex),
+		"-c:s", "srt",
+		"-f", "srt",
+		"-y", tempPath,
+	)
+	if err != nil {
+		_ = os.Remove(tempPath)
+		r.logf("[警告] 提取内挂文本字幕失败，将继续直接使用内挂字幕流。")
+		if message := strings.TrimSpace(system.BestErrorMessage(err, stderr, stdout)); message != "" {
+			normalized := strings.ReplaceAll(message, "\r\n", "\n")
+			normalized = strings.ReplaceAll(normalized, "\r", "\n")
+			for _, line := range strings.Split(normalized, "\n") {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				r.logf("[警告] 提取失败详情: %s", line)
+			}
+		}
+		return nil
+	}
+
+	r.tempSubtitleFile = tempPath
+	r.subtitle.Mode = "external"
+	r.subtitle.File = tempPath
+	r.subtitle.Codec = "subrip"
+	r.subtitle.StreamIndex = -1
+	r.subtitle.RelativeIndex = -1
+	r.subtitle.ExtractedText = true
+	r.logf("[信息] 已提取内挂文本字幕供截图使用：%s", tempPath)
+	return nil
 }
 
 // findExternalSubtitle 会在视频附近查找语言优先级最高的外挂字幕文件。
@@ -729,7 +785,10 @@ func (r *screenshotRunner) logSelectedSubtitleSummary() {
 
 	source := "外挂"
 	render := "直接使用外挂文件"
-	if r.subtitle.Mode == "internal" {
+	if r.subtitle.ExtractedText {
+		source = "内封"
+		render = "提取内挂文字字幕后按外挂文件渲染"
+	} else if r.subtitle.Mode == "internal" {
 		source = "内封"
 		render = "直接使用内封轨道"
 	}

@@ -199,7 +199,6 @@ func (r *screenshotRunner) capturePrimary(aligned float64, path string) error {
 			frameSelect,
 			fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", formatFloat(aligned)),
 			subFilter,
-			buildDisplayAspectFilter(),
 		)
 	}
 
@@ -256,7 +255,6 @@ func (r *screenshotRunner) capturePNGReencoded(aligned float64, path string) err
 			fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", formatFloat(aligned)),
 			subFilter,
 			r.colorChain,
-			buildDisplayAspectFilter(),
 		)
 	}
 
@@ -344,7 +342,6 @@ func (r *screenshotRunner) captureJPGReencoded(aligned float64, path string) err
 			frameSelect,
 			fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", formatFloat(aligned)),
 			subFilter,
-			buildDisplayAspectFilter(),
 		)
 	}
 

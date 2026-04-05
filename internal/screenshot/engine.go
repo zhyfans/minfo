@@ -59,6 +59,7 @@ type subtitleSelection struct {
 	Lang          string
 	Codec         string
 	Title         string
+	ExtractedText bool
 }
 
 type subtitleSpan struct {
@@ -154,6 +155,7 @@ type screenshotRunner struct {
 	subtitle                 subtitleSelection
 	subtitleIndex            []subtitleSpan
 	rejectedBitmapCandidates map[string]struct{}
+	tempSubtitleFile         string
 
 	startOffset float64
 	duration    float64
@@ -201,6 +203,7 @@ func runScreenshotsFromSource(ctx context.Context, sourcePath, dvdMediaInfoPath,
 		},
 		logHandler: onLog,
 	}
+	defer runner.cleanupTemporarySubtitleFile()
 
 	runner.logf("[信息] 已切换为 Go 截图引擎。")
 	if looksLikeDVDSource(runner.dvdProbeSource()) {
@@ -284,6 +287,10 @@ func (r *screenshotRunner) init(timestamps []string) error {
 		r.prepareBlurayProbeContext()
 	}
 	r.chooseSubtitle()
+	if err := r.prepareTextSubtitleRenderSource(); err != nil {
+		return err
+	}
+	r.logSelectedSubtitleSummary()
 
 	r.startOffset = r.detectStartOffset()
 	r.duration, err = probeMediaDuration(r.ctx, r.ffprobeBin, r.sourcePath)
@@ -304,6 +311,15 @@ func (r *screenshotRunner) init(timestamps []string) error {
 
 	r.logf("[信息] 容器起始偏移：%.3fs | 影片总时长：%s", r.startOffset, secToHMS(r.duration))
 	return nil
+}
+
+// cleanupTemporarySubtitleFile 会在截图任务结束时清理提取出的临时字幕文件。
+func (r *screenshotRunner) cleanupTemporarySubtitleFile() {
+	if strings.TrimSpace(r.tempSubtitleFile) == "" {
+		return
+	}
+	_ = os.Remove(r.tempSubtitleFile)
+	r.tempSubtitleFile = ""
 }
 
 // run 会按请求时间点执行整轮截图流程，并汇总成功、失败和最终输出文件。

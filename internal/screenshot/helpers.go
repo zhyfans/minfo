@@ -81,6 +81,16 @@ func subtitleHandlingLabel(codec string) string {
 	}
 }
 
+// isASSLikeTextSubtitleCodec 会判断文字字幕 codec 是否为 ASS/SSA 这类需要保留样式的字幕格式。
+func isASSLikeTextSubtitleCodec(codec string) bool {
+	switch strings.ToLower(strings.TrimSpace(codec)) {
+	case "ass", "ssa":
+		return true
+	default:
+		return false
+	}
+}
+
 // parseRequestedTimestamps 把请求里的 HH:MM:SS 时间点列表转换为秒数切片。
 func parseRequestedTimestamps(values []string) ([]float64, error) {
 	result := make([]float64, 0, len(values))
@@ -798,6 +808,11 @@ func floatDiffGT(a, b float64) bool {
 func escapeFilterValue(value string) string {
 	value = strings.ReplaceAll(value, `\`, `\\`)
 	value = strings.ReplaceAll(value, `'`, `\'`)
+	value = strings.ReplaceAll(value, `:`, `\:`)
+	value = strings.ReplaceAll(value, `,`, `\,`)
+	value = strings.ReplaceAll(value, `;`, `\;`)
+	value = strings.ReplaceAll(value, `[`, `\[`)
+	value = strings.ReplaceAll(value, `]`, `\]`)
 	return value
 }
 
