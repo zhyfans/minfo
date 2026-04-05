@@ -19,9 +19,9 @@ const (
 	MediaInfoBinaryPath = "/usr/bin/mediainfo"
 	BDInfoBinaryPath    = "/usr/local/bin/bdinfo"
 	BDSubBinaryPath     = "/usr/local/bin/bdsub"
-	MountBinaryPath     = "/usr/bin/mount"
-	UmountBinaryPath    = "/usr/bin/umount"
-	ModprobeBinaryPath  = "/usr/sbin/modprobe"
+	MountBinaryPath     = "/bin/mount"
+	UmountBinaryPath    = "/bin/umount"
+	ModprobeBinaryPath  = "/sbin/modprobe"
 )
 
 // ResolveBin 会校验固定路径的可执行文件当前可用，并返回该固定路径。
