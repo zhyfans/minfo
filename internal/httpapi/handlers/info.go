@@ -1,3 +1,5 @@
+// Package handlers 提供 MediaInfo 和 BDInfo 信息接口。
+
 package handlers
 
 import (
@@ -5,11 +7,11 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"minfo/internal/bdinfo"
 	"minfo/internal/config"
 	"minfo/internal/httpapi/logstream"
 	"minfo/internal/httpapi/transport"
@@ -17,6 +19,7 @@ import (
 	"minfo/internal/system"
 )
 
+// MediaInfoHandler 返回处理 MediaInfo 请求的 HTTP Handler，并在候选源之间重试直到拿到有效输出。
 func MediaInfoHandler(envKey, fallback string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !transport.EnsurePost(w, r) {
@@ -96,7 +99,8 @@ func MediaInfoHandler(envKey, fallback string) http.HandlerFunc {
 	}
 }
 
-func BDInfoHandler(envKey, fallback string) http.HandlerFunc {
+// BDInfoHandler 返回处理 BDInfo 请求的 HTTP Handler，并把报告内容按前端模式整理成统一 JSON 响应。
+func BDInfoHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !transport.EnsurePost(w, r) {
 			return
@@ -118,44 +122,28 @@ func BDInfoHandler(envKey, fallback string) http.HandlerFunc {
 		defer cleanup()
 		logger.Logf("[bdinfo] 输入路径: %s", path)
 
-		bin, err := system.ResolveBin(envKey, fallback)
-		if err != nil {
-			logger.Logf("[bdinfo] 未找到可执行文件: %s", err.Error())
-			writeInfoError(w, http.StatusBadRequest, err.Error(), logger)
-			return
-		}
-		logger.Logf("[bdinfo] 使用命令: %s", bin)
-
 		ctx, cancel := context.WithTimeout(r.Context(), config.RequestTimeout)
 		defer cancel()
 
-		bdPath, bdCleanup, err := media.ResolveBDInfoSource(ctx, path)
+		result, err := bdinfo.Run(ctx, path, bdinfo.RunOptions{
+			CommandOutput: logger.CommandOutput("bdinfo"),
+			Logf:          logger.Logf,
+		})
 		if err != nil {
-			logger.Logf("[bdinfo] 解析源路径失败: %s", err.Error())
-			writeInfoError(w, http.StatusBadRequest, err.Error(), logger)
-			return
-		}
-		defer bdCleanup()
-		logger.Logf("[bdinfo] 实际检测路径: %s", bdPath)
-
-		logger.Logf("[bdinfo] 执行命令: %s", formatCommand(bin, bdPath))
-		stdout, stderr, err := system.RunCommandLive(ctx, bin, logger.CommandOutput("bdinfo"), bdPath)
-		if err != nil {
-			lastErr := system.BestErrorMessage(err, stderr, stdout)
-			logger.LogMultiline("[bdinfo][error] ", lastErr)
-			writeInfoError(w, http.StatusInternalServerError, lastErr, logger)
+			logger.LogMultiline("[bdinfo][error] ", err.Error())
+			writeInfoError(w, http.StatusInternalServerError, err.Error(), logger)
 			return
 		}
 
-		output := system.CombineCommandOutput(stdout, stderr)
+		output := result.Output
 		if shouldExtractBDInfoCode(r.FormValue("bdinfo_mode")) {
 			logger.Logf("[bdinfo] 输出模式: 精简报告")
-			output = extractBDInfoCodeBlock(output)
+			output = bdinfo.ExtractCodeBlock(output)
 		} else {
 			logger.Logf("[bdinfo] 输出模式: 完整报告")
 		}
 
-		logger.Logf("[bdinfo] 完成: %s", bdPath)
+		logger.Logf("[bdinfo] 完成: %s", result.ResolvedPath)
 		transport.WriteJSON(w, http.StatusOK, transport.InfoResponse{
 			OK:     true,
 			Output: output,
@@ -164,43 +152,9 @@ func BDInfoHandler(envKey, fallback string) http.HandlerFunc {
 	}
 }
 
+// shouldExtractBDInfoCode 会根据表单里的输出模式判断是否只返回精简代码块。
 func shouldExtractBDInfoCode(mode string) bool {
 	return strings.TrimSpace(strings.ToLower(mode)) != "full"
-}
-
-func extractBDInfoCodeBlock(output string) string {
-	matches := regexp.MustCompile(`(?is)\[code\](.*?)\[/code\]`).FindAllStringSubmatch(output, -1)
-	if len(matches) == 0 {
-		return output
-	}
-
-	best := ""
-	bestScore := -1
-	for _, match := range matches {
-		if len(match) < 2 {
-			continue
-		}
-
-		block := strings.TrimSpace(match[1])
-		if block == "" {
-			continue
-		}
-
-		score := len(block)
-		if strings.Contains(strings.ToUpper(block), "DISC INFO:") {
-			score += 1_000_000
-		}
-
-		if score > bestScore {
-			best = block
-			bestScore = score
-		}
-	}
-
-	if best == "" {
-		return output
-	}
-	return best
 }
 
 type infoLogger struct {
@@ -213,6 +167,7 @@ type timedLogLine struct {
 	message   string
 }
 
+// newInfoLogger 会创建一个带时间戳缓存的请求日志记录器。
 func newInfoLogger(session *logstream.Session) *infoLogger {
 	return &infoLogger{
 		session: session,
@@ -220,6 +175,7 @@ func newInfoLogger(session *logstream.Session) *infoLogger {
 	}
 }
 
+// Logf 会记录格式化日志，并在存在实时会话时同步推送给前端。
 func (l *infoLogger) Logf(format string, args ...any) {
 	if l == nil {
 		return
@@ -235,6 +191,7 @@ func (l *infoLogger) Logf(format string, args ...any) {
 	}
 }
 
+// LogLine 会按原样记录单行日志。
 func (l *infoLogger) LogLine(line string) {
 	if l == nil {
 		return
@@ -242,6 +199,7 @@ func (l *infoLogger) LogLine(line string) {
 	l.Logf("%s", line)
 }
 
+// LogMultiline 会按行拆分多行文本，并为每一行补上统一前缀。
 func (l *infoLogger) LogMultiline(prefix, text string) {
 	if l == nil {
 		return
@@ -255,12 +213,14 @@ func (l *infoLogger) LogMultiline(prefix, text string) {
 	}
 }
 
+// CommandOutput 返回一个命令输出回调，负责把 stdout 和 stderr 逐行写入日志。
 func (l *infoLogger) CommandOutput(scope string) system.OutputLineHandler {
 	return func(stream, line string) {
 		l.Logf("[%s][%s] %s", scope, stream, line)
 	}
 }
 
+// String 返回当前请求已经累积的完整日志文本。
 func (l *infoLogger) String() string {
 	if l == nil || len(l.lines) == 0 {
 		return ""
@@ -277,6 +237,7 @@ func (l *infoLogger) String() string {
 	return strings.Join(formatted, "\n")
 }
 
+// Close 会关闭当前日志会话，通知订阅端后续不再推送新内容。
 func (l *infoLogger) Close() {
 	if l == nil || l.session == nil {
 		return
@@ -284,6 +245,7 @@ func (l *infoLogger) Close() {
 	l.session.Close()
 }
 
+// writeInfoError 会把统一格式的错误响应连同当前日志一起写回客户端。
 func writeInfoError(w http.ResponseWriter, status int, message string, logger *infoLogger) {
 	transport.WriteJSON(w, status, transport.InfoResponse{
 		OK:    false,
@@ -292,6 +254,7 @@ func writeInfoError(w http.ResponseWriter, status int, message string, logger *i
 	})
 }
 
+// splitLogLines 会把混合换行符的文本拆成稳定的逐行结果。
 func splitLogLines(text string) []string {
 	normalized := strings.ReplaceAll(text, "\r\n", "\n")
 	normalized = strings.ReplaceAll(normalized, "\r", "\n")
@@ -301,6 +264,7 @@ func splitLogLines(text string) []string {
 	return strings.Split(normalized, "\n")
 }
 
+// formatCommand 会把命令和参数格式化成便于日志展示的可读字符串。
 func formatCommand(bin string, args ...string) string {
 	parts := make([]string, 0, len(args)+1)
 	parts = append(parts, quoteArg(bin))
@@ -310,6 +274,7 @@ func formatCommand(bin string, args ...string) string {
 	return strings.Join(parts, " ")
 }
 
+// quoteArg 会在需要时为单个命令参数补上引号和转义。
 func quoteArg(value string) string {
 	if value == "" {
 		return `""`
