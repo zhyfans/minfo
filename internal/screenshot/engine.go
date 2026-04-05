@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -256,19 +255,19 @@ func variantSettingsFor(variant string) variantSettings {
 func (r *screenshotRunner) init(timestamps []string) error {
 	var err error
 
-	r.ffmpegBin, err = system.ResolveBin("FFMPEG_BIN", "ffmpeg")
+	r.ffmpegBin, err = system.ResolveBin(system.FFmpegBinaryPath)
 	if err != nil {
 		return err
 	}
-	r.ffprobeBin, err = system.ResolveBin("FFPROBE_BIN", "ffprobe")
+	r.ffprobeBin, err = system.ResolveBin(system.FFprobeBinaryPath)
 	if err != nil {
 		return err
 	}
-	if bin, binErr := system.ResolveBin("MEDIAINFO_BIN", "mediainfo"); binErr == nil {
+	if bin, binErr := system.ResolveBin(system.MediaInfoBinaryPath); binErr == nil {
 		r.mediainfoBin = bin
 	}
-	if path, lookErr := exec.LookPath("bdsub"); lookErr == nil {
-		r.bdsubBin = path
+	if bin, binErr := system.ResolveBin(system.BDSubBinaryPath); binErr == nil {
+		r.bdsubBin = bin
 	}
 
 	r.requested, err = parseRequestedTimestamps(timestamps)

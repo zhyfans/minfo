@@ -20,13 +20,8 @@ import (
 	"minfo/internal/system"
 )
 
-const (
-	defaultMediaInfoEnvKey   = "MEDIAINFO_BIN"
-	defaultMediaInfoFallback = "mediainfo"
-)
-
 // MediaInfoHandler 返回处理 MediaInfo 请求的 HTTP Handler，并在候选源之间重试直到拿到有效输出。
-func MediaInfoHandler(envKey, fallback string) http.HandlerFunc {
+func MediaInfoHandler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !transport.EnsurePost(w, r) {
 			return
@@ -48,7 +43,7 @@ func MediaInfoHandler(envKey, fallback string) http.HandlerFunc {
 		defer cleanup()
 		logger.Logf("[mediainfo] 输入路径: %s", path)
 
-		bin, err := system.ResolveBin(envKey, fallback)
+		bin, err := system.ResolveBin(system.MediaInfoBinaryPath)
 		if err != nil {
 			logger.Logf("[mediainfo] 未找到可执行文件: %s", err.Error())
 			writeInfoError(w, http.StatusBadRequest, err.Error(), logger)

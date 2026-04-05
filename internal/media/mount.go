@@ -14,11 +14,11 @@ import (
 
 // mountISO 将 ISO 只读挂载到临时目录，并返回挂载点和清理函数。
 func mountISO(ctx context.Context, isoPath string) (string, func(), error) {
-	mountBin, err := system.ResolveBin("MOUNT_BIN", "mount")
+	mountBin, err := system.ResolveBin(system.MountBinaryPath)
 	if err != nil {
 		return "", func() {}, err
 	}
-	umountBin, err := system.ResolveBin("UMOUNT_BIN", "umount")
+	umountBin, err := system.ResolveBin(system.UmountBinaryPath)
 	if err != nil {
 		return "", func() {}, err
 	}
@@ -78,7 +78,7 @@ func isUnknownUDFMountError(message string) bool {
 
 // LoadUDFModule 尝试通过 modprobe 加载 UDF 内核模块。
 func LoadUDFModule(ctx context.Context) error {
-	modprobeBin, err := system.ResolveBin("MODPROBE_BIN", "modprobe")
+	modprobeBin, err := system.ResolveBin(system.ModprobeBinaryPath)
 	if err != nil {
 		return err
 	}

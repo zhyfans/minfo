@@ -233,7 +233,7 @@ func (j *infoJob) run() {
 
 	switch j.kind {
 	case infoKindMediaInfo:
-		bin, err := system.ResolveBin(defaultMediaInfoEnvKey, defaultMediaInfoFallback)
+		bin, err := system.ResolveBin(system.MediaInfoBinaryPath)
 		if err != nil {
 			j.logger.Logf("[mediainfo] 未找到可执行文件: %s", err.Error())
 			j.fail(err)

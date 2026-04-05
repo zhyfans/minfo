@@ -102,12 +102,11 @@ RUN set -eux; \
     chmod +x /usr/local/bin/sudo
 
 COPY --from=build /out/minfo /usr/local/bin/minfo
-COPY --from=bdinfo-build /out/bdinfo/BDInfo /opt/bdinfo/BDInfo
+COPY --from=bdinfo-build /out/bdinfo/BDInfo /usr/local/bin/bdinfo
 COPY --from=media-helper-build /out/bdsub /usr/local/bin/bdsub
 
-RUN chmod +x /usr/local/bin/minfo /usr/local/bin/bdsub /opt/bdinfo/BDInfo
+RUN chmod +x /usr/local/bin/minfo /usr/local/bin/bdinfo /usr/local/bin/bdsub
 
-ENV BDINFO_BIN=/opt/bdinfo/BDInfo
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV PORT=28080
@@ -140,13 +139,12 @@ RUN apk add --no-cache \
 
 RUN GOBIN=/usr/local/bin go install github.com/go-delve/delve/cmd/dlv@latest
 
-COPY --from=runtime /opt/bdinfo /opt/bdinfo
+COPY --from=runtime /usr/local/bin/bdinfo /usr/local/bin/bdinfo
 COPY --from=runtime /usr/local/bin/bdsub /usr/local/bin/bdsub
 COPY --from=runtime /usr/local/bin/sudo /usr/local/bin/sudo
 
-RUN chmod +x /usr/local/bin/dlv /usr/local/bin/bdsub /usr/local/bin/sudo /opt/bdinfo/BDInfo
+RUN chmod +x /usr/local/bin/dlv /usr/local/bin/bdinfo /usr/local/bin/bdsub /usr/local/bin/sudo
 
-ENV BDINFO_BIN=/opt/bdinfo/BDInfo
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV PORT=28080

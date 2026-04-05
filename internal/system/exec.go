@@ -11,17 +11,25 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-
-	"minfo/internal/config"
 )
 
-// ResolveBin 会按环境变量和回退值解析可执行文件路径，并校验它当前可用。
-func ResolveBin(envKey, fallback string) (string, error) {
-	bin := config.Getenv(envKey, fallback)
-	if _, err := exec.LookPath(bin); err != nil {
-		return "", fmt.Errorf("%s not found; set %s or add to PATH", bin, envKey)
+const (
+	FFmpegBinaryPath    = "/usr/bin/ffmpeg"
+	FFprobeBinaryPath   = "/usr/bin/ffprobe"
+	MediaInfoBinaryPath = "/usr/bin/mediainfo"
+	BDInfoBinaryPath    = "/usr/local/bin/bdinfo"
+	BDSubBinaryPath     = "/usr/local/bin/bdsub"
+	MountBinaryPath     = "/usr/bin/mount"
+	UmountBinaryPath    = "/usr/bin/umount"
+	ModprobeBinaryPath  = "/usr/sbin/modprobe"
+)
+
+// ResolveBin 会校验固定路径的可执行文件当前可用，并返回该固定路径。
+func ResolveBin(path string) (string, error) {
+	if _, err := exec.LookPath(path); err != nil {
+		return "", fmt.Errorf("%s not found", path)
 	}
-	return bin, nil
+	return path, nil
 }
 
 // RunCommand 会在默认工作目录中执行外部命令，并返回完整 stdout、stderr 和错误状态。

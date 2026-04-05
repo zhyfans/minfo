@@ -15,7 +15,7 @@ func NewHandler(assets fs.FS) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(assets)))
 	mux.HandleFunc("/api/logs", handlers.LogsHandler)
-	mux.HandleFunc("/api/mediainfo", handlers.MediaInfoHandler("MEDIAINFO_BIN", "mediainfo"))
+	mux.HandleFunc("/api/mediainfo", handlers.MediaInfoHandler())
 	mux.HandleFunc("/api/bdinfo", handlers.BDInfoHandler())
 	mux.HandleFunc("/api/info-jobs", handlers.InfoJobsHandler)
 	mux.HandleFunc("/api/info-jobs/", handlers.InfoJobHandler)

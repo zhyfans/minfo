@@ -6,9 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -20,7 +18,7 @@ import (
 )
 
 const (
-	defaultBinaryPath = "/opt/bdinfo/BDInfo"
+	defaultBinaryPath = system.BDInfoBinaryPath
 	defaultReportName = "bdinfo.txt"
 )
 
@@ -110,54 +108,11 @@ func (o RunOptions) logf(format string, args ...any) {
 
 // resolveBinary 按环境变量和默认目录查找可用的 BDInfo 可执行文件。
 func resolveBinary() (string, error) {
-	envValue := strings.TrimSpace(os.Getenv("BDINFO_BIN"))
-	if envValue != "" {
-		if _, err := exec.LookPath(envValue); err != nil {
-			return "", fmt.Errorf("%s not found; set BDINFO_BIN or install BDInfo under /opt/bdinfo", envValue)
-		}
-		return envValue, nil
+	binaryPath, err := system.ResolveBin(defaultBinaryPath)
+	if err != nil {
+		return "", errors.New("bdinfo: BDInfo binary not found under /usr/local/bin")
 	}
-
-	if _, err := exec.LookPath(defaultBinaryPath); err == nil {
-		return defaultBinaryPath, nil
-	}
-
-	candidates := make([]string, 0, 4)
-	walkErr := filepath.WalkDir("/opt/bdinfo", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			rel, relErr := filepath.Rel("/opt/bdinfo", path)
-			if relErr == nil && rel != "." && strings.Count(rel, string(filepath.Separator)) >= 4 {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-
-		base := strings.ToLower(strings.TrimSpace(d.Name()))
-		if !strings.HasPrefix(base, "bdinfo") {
-			return nil
-		}
-
-		info, infoErr := d.Info()
-		if infoErr != nil {
-			return infoErr
-		}
-		if info.Mode()&0o111 == 0 {
-			return nil
-		}
-		candidates = append(candidates, path)
-		return nil
-	})
-	if walkErr != nil && !errors.Is(walkErr, fs.ErrNotExist) {
-		return "", walkErr
-	}
-	if len(candidates) == 0 {
-		return "", errors.New("bdinfo: BDInfo binary not found under /opt/bdinfo")
-	}
-	sort.Strings(candidates)
-	return candidates[0], nil
+	return binaryPath, nil
 }
 
 // buildCommandArgs 会构建命令参数，为后续流程准备好可直接使用的结果。
@@ -334,11 +289,11 @@ func directoryExists(path string) bool {
 
 // bindMountPath 将源目录只读绑定挂载到目标路径，并返回卸载清理函数。
 func bindMountPath(ctx context.Context, sourcePath, targetPath string) (bool, func(), error) {
-	mountBin, err := system.ResolveBin("MOUNT_BIN", "mount")
+	mountBin, err := system.ResolveBin(system.MountBinaryPath)
 	if err != nil {
 		return false, nil, err
 	}
-	umountBin, err := system.ResolveBin("UMOUNT_BIN", "umount")
+	umountBin, err := system.ResolveBin(system.UmountBinaryPath)
 	if err != nil {
 		return false, nil, err
 	}

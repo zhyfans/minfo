@@ -149,7 +149,7 @@ func RunUploadWithLiveLogs(ctx context.Context, inputPath, outputDir, variant, s
 func randomScreenshotTimestampsForSource(ctx context.Context, sourcePath string, count int) ([]string, error) {
 	count = normalizeCountValue(count)
 
-	ffprobe, err := system.ResolveBin("FFPROBE_BIN", "ffprobe")
+	ffprobe, err := system.ResolveBin(system.FFprobeBinaryPath)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +285,7 @@ func probeVideoStartOffset(ctx context.Context, ffprobe, path string) (float64, 
 
 // probeMediaInfoDuration 使用 mediainfo 的 General Duration 结果补充时长探测。
 func probeMediaInfoDuration(ctx context.Context, path string) (float64, error) {
-	mediainfo, err := system.ResolveBin("MEDIAINFO_BIN", "mediainfo")
+	mediainfo, err := system.ResolveBin(system.MediaInfoBinaryPath)
 	if err != nil {
 		return 0, err
 	}
