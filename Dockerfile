@@ -2,17 +2,21 @@ ARG BDINFO_REPO=https://github.com/mirrorb/BDInfo.git
 ARG BDINFO_REF=master
 ARG BDINFO_CSPROJ=BDInfo.Core/BDInfo/BDInfo.csproj
 ARG GO_VERSION=1.26.1
+ARG APP_VERSION=dev
 
 # 构建 WebUI
 FROM --platform=$BUILDPLATFORM node:20-alpine AS webui
+ARG APP_VERSION=dev
 WORKDIR /app
 COPY webui/package.json ./
 RUN npm install --no-audit --no-fund
 COPY webui .
+ENV VITE_APP_VERSION=$APP_VERSION
 RUN npm run build
 
 # 构建 Go 后端
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-alpine AS build
+ARG APP_VERSION=dev
 WORKDIR /src
 COPY go.mod ./
 COPY *.go ./
@@ -22,7 +26,7 @@ COPY --from=webui /app/dist ./webui/dist
 ARG TARGETOS
 ARG TARGETARCH
 ENV CGO_ENABLED=0
-RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/minfo ./cmd/minfo
+RUN GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -buildvcs=false -ldflags="-s -w -X minfo/internal/version.Version=${APP_VERSION}" -o /out/minfo ./cmd/minfo
 
 # 构建 BDInfo (.NET)
 FROM --platform=$BUILDPLATFORM mcr.microsoft.com/dotnet/sdk:9.0-alpine AS bdinfo-build
@@ -100,11 +104,10 @@ RUN set -eux; \
 COPY --from=build /out/minfo /usr/local/bin/minfo
 COPY --from=bdinfo-build /out/bdinfo/BDInfo /opt/bdinfo/BDInfo
 COPY --from=media-helper-build /out/bdsub /usr/local/bin/bdsub
-COPY bdinfo.sh /usr/local/bin/bdinfo
 
-RUN chmod +x /usr/local/bin/bdinfo /usr/local/bin/minfo /usr/local/bin/bdsub /opt/bdinfo/BDInfo
+RUN chmod +x /usr/local/bin/minfo /usr/local/bin/bdsub /opt/bdinfo/BDInfo
 
-ENV BDINFO_BIN=/usr/local/bin/bdinfo
+ENV BDINFO_BIN=/opt/bdinfo/BDInfo
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV PORT=28080
@@ -138,13 +141,12 @@ RUN apk add --no-cache \
 RUN GOBIN=/usr/local/bin go install github.com/go-delve/delve/cmd/dlv@latest
 
 COPY --from=runtime /opt/bdinfo /opt/bdinfo
-COPY --from=runtime /usr/local/bin/bdinfo /usr/local/bin/bdinfo
 COPY --from=runtime /usr/local/bin/bdsub /usr/local/bin/bdsub
 COPY --from=runtime /usr/local/bin/sudo /usr/local/bin/sudo
 
-RUN chmod +x /usr/local/bin/dlv /usr/local/bin/bdinfo /usr/local/bin/bdsub /usr/local/bin/sudo /opt/bdinfo/BDInfo
+RUN chmod +x /usr/local/bin/dlv /usr/local/bin/bdsub /usr/local/bin/sudo /opt/bdinfo/BDInfo
 
-ENV BDINFO_BIN=/usr/local/bin/bdinfo
+ENV BDINFO_BIN=/opt/bdinfo/BDInfo
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV PORT=28080
