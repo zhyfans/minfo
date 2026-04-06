@@ -87,10 +87,13 @@ type blurayHelperTrack struct {
 }
 
 type blurayHelperResult struct {
-	Source string `json:"source"`
-	Clip   struct {
+	Source         string `json:"source"`
+	BitrateScanned bool   `json:"bitrate_scanned"`
+	BitrateMode    string `json:"bitrate_mode"`
+	Clip           struct {
 		ClipID        string              `json:"clip_id"`
 		PGStreamCount int                 `json:"pg_stream_count"`
+		PacketSeconds float64             `json:"packet_seconds"`
 		PGStreams     []blurayHelperTrack `json:"pg_streams"`
 	} `json:"clip"`
 }
@@ -107,6 +110,7 @@ type preferredSubtitleRank struct {
 	DispositionScore int
 	PID              int
 	PIDOK            bool
+	BitmapKind       bitmapSubtitleKind
 	Bitrate          int64
 	UseBitrate       bool
 }

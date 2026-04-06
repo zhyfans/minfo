@@ -1,11 +1,18 @@
 #include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#define STREAM_TYPE_MPEG1_VIDEO 0x01
+#define STREAM_TYPE_MPEG2_VIDEO 0x02
+#define STREAM_TYPE_AVC_VIDEO 0x1B
+#define STREAM_TYPE_MVC_VIDEO 0x20
+#define STREAM_TYPE_HEVC_VIDEO 0x24
+#define STREAM_TYPE_VC1_VIDEO 0xEA
 #define STREAM_TYPE_PRESENTATION_GRAPHICS 0x90
 #define STREAM_TYPE_INTERACTIVE_GRAPHICS 0x91
 #define M2TS_PACKET_SIZE 192
@@ -25,18 +32,51 @@ typedef struct pg_stream_info {
 
 typedef struct probe_result {
     char source[32];
+    char bitrate_mode[32];
     uint32_t playlist;
     uint32_t clip_ref;
+    uint32_t clip_in_time_ticks;
+    uint32_t clip_out_time_ticks;
     uint32_t clip_duration_ticks;
+    double clip_packet_seconds;
+    int bitrate_scanned;
     char clip_id[6];
+    size_t video_stream_count;
+    uint16_t *video_streams;
     size_t pg_stream_count;
     PG_STREAM_INFO *pg_streams;
 } PROBE_RESULT;
 
+typedef struct scan_pid_state {
+    uint16_t pid;
+    uint8_t kind;
+    uint32_t parse;
+    int transfer_state;
+    int packet_length;
+    int packet_length_variable;
+    uint8_t packet_length_parse;
+    uint8_t packet_parse;
+    uint8_t pes_header_length;
+    uint8_t pes_header_flags;
+    uint8_t pts_parse;
+    uint64_t pts_temp;
+    uint64_t pts_last;
+    uint64_t dts_prev;
+    uint64_t dts_temp;
+    uint8_t dts_parse;
+    uint64_t pts_count;
+    PG_STREAM_INFO *pg_stream;
+} SCAN_PID_STATE;
+
+enum {
+    SCAN_KIND_VIDEO = 1,
+    SCAN_KIND_GRAPHICS = 2
+};
+
 static void usage(const char *argv0)
 {
     fprintf(stderr,
-            "usage: %s <disc-path> --playlist <mpls> [--clip <clip-id>]\n",
+            "usage: %s <disc-path> --playlist <mpls> [--clip <clip-id>] [--scan-bitrate]\n",
             argv0);
 }
 
@@ -57,6 +97,40 @@ static int parse_u32(const char *text, uint32_t *out)
 
     *out = (uint32_t)value;
     return 1;
+}
+
+static void log_stagef(const char *format, ...)
+{
+    va_list args;
+
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    fputc('\n', stderr);
+    fflush(stderr);
+    va_end(args);
+}
+
+static int stream_type_is_video(uint8_t stream_type)
+{
+    switch (stream_type) {
+    case STREAM_TYPE_MPEG1_VIDEO:
+    case STREAM_TYPE_MPEG2_VIDEO:
+    case STREAM_TYPE_AVC_VIDEO:
+    case STREAM_TYPE_MVC_VIDEO:
+    case STREAM_TYPE_HEVC_VIDEO:
+    case STREAM_TYPE_VC1_VIDEO:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static uint64_t round_to_u64(double value)
+{
+    if (!(value > 0.0)) {
+        return 0;
+    }
+    return (uint64_t)(value + 0.5);
 }
 
 static uint16_t read_be16(const uint8_t *data, size_t pos)
@@ -149,6 +223,9 @@ static void probe_result_free(PROBE_RESULT *result)
     if (!result) {
         return;
     }
+    free(result->video_streams);
+    result->video_streams = NULL;
+    result->video_stream_count = 0;
     free(result->pg_streams);
     result->pg_streams = NULL;
     result->pg_stream_count = 0;
@@ -180,20 +257,48 @@ static void probe_result_set_clip_duration(PROBE_RESULT *result, uint32_t clip_d
     result->clip_duration_ticks = clip_duration_ticks;
 }
 
-static PG_STREAM_INFO *probe_result_find_pg_stream(PROBE_RESULT *result, uint16_t pid)
+static void probe_result_set_clip_times(PROBE_RESULT *result,
+                                        uint32_t clip_in_time_ticks,
+                                        uint32_t clip_out_time_ticks)
 {
+    if (!result) {
+        return;
+    }
+    result->clip_in_time_ticks = clip_in_time_ticks;
+    result->clip_out_time_ticks = clip_out_time_ticks;
+}
+
+static void probe_result_set_bitrate_mode(PROBE_RESULT *result, const char *mode)
+{
+    if (!result || !mode) {
+        return;
+    }
+    snprintf(result->bitrate_mode, sizeof(result->bitrate_mode), "%s", mode);
+}
+
+static int probe_result_add_video_stream(PROBE_RESULT *result, uint16_t pid)
+{
+    uint16_t *streams;
     size_t i;
 
     if (!result || pid == 0) {
-        return NULL;
+        return 0;
     }
 
-    for (i = 0; i < result->pg_stream_count; i++) {
-        if (result->pg_streams[i].pid == pid) {
-            return &result->pg_streams[i];
+    for (i = 0; i < result->video_stream_count; i++) {
+        if (result->video_streams[i] == pid) {
+            return 1;
         }
     }
-    return NULL;
+
+    streams = (uint16_t *)realloc(result->video_streams,
+                                  sizeof(uint16_t) * (result->video_stream_count + 1));
+    if (!streams) {
+        return 0;
+    }
+    result->video_streams = streams;
+    result->video_streams[result->video_stream_count++] = pid;
+    return 1;
 }
 
 static int probe_result_upsert_pg_stream(PROBE_RESULT *result,
@@ -263,7 +368,7 @@ static void probe_result_finalize_pg_bitrates(PROBE_RESULT *result)
 {
     size_t i;
 
-    if (!result || result->clip_duration_ticks == 0) {
+    if (!result || !(result->clip_packet_seconds > 0.0)) {
         return;
     }
 
@@ -273,10 +378,8 @@ static void probe_result_finalize_pg_bitrates(PROBE_RESULT *result)
             stream->bitrate = 0;
             continue;
         }
-        stream->bitrate =
-            (stream->payload_bytes * 8u * (uint64_t)45000u +
-             (uint64_t)result->clip_duration_ticks / 2u) /
-            (uint64_t)result->clip_duration_ticks;
+        stream->bitrate = round_to_u64(
+            ((double)stream->payload_bytes * 8.0) / result->clip_packet_seconds);
     }
 }
 
@@ -446,9 +549,13 @@ static int parse_playlist_stream_descriptor(const uint8_t *data,
     }
 
     stream_type = data[(*pos)++];
-    if ((stream_type == STREAM_TYPE_PRESENTATION_GRAPHICS ||
-         stream_type == STREAM_TYPE_INTERACTIVE_GRAPHICS) &&
-        *pos + 3 <= size) {
+    if (stream_type_is_video(stream_type)) {
+        if (!probe_result_add_video_stream(result, pid)) {
+            return 0;
+        }
+    } else if ((stream_type == STREAM_TYPE_PRESENTATION_GRAPHICS ||
+                stream_type == STREAM_TYPE_INTERACTIVE_GRAPHICS) &&
+               *pos + 3 <= size) {
         normalize_lang_code(&data[*pos], lang);
         if (*pos + 3 < size) {
             char_code = data[*pos + 3];
@@ -629,6 +736,7 @@ static int parse_mpls_streams(const char *disc_path,
 
             found_any_clip = 1;
             probe_result_set_clip(result, item_name, item_index);
+            probe_result_set_clip_times(result, in_time, out_time);
             probe_result_set_clip_duration(result, clip_duration_ticks);
 
             for (count_index = 0; count_index < stream_count_video; count_index++) {
@@ -676,7 +784,7 @@ static int parse_clpi_streams(const char *disc_path,
     size_t clip_size;
     size_t stream_offset;
     size_t stream_index;
-    int found_any = 0;
+    int found_pg = 0;
     const char *clip_id = requested_clip;
 
     if (!disc_path || !result) {
@@ -742,9 +850,14 @@ static int parse_clpi_streams(const char *disc_path,
         }
 
         stream_type = data[descriptor_start + 1];
-        if ((stream_type == STREAM_TYPE_PRESENTATION_GRAPHICS ||
-             stream_type == STREAM_TYPE_INTERACTIVE_GRAPHICS) &&
-            descriptor_start + 5 <= clip_offset + clip_size) {
+        if (stream_type_is_video(stream_type)) {
+            if (!probe_result_add_video_stream(result, pid)) {
+                free(data);
+                return 0;
+            }
+        } else if ((stream_type == STREAM_TYPE_PRESENTATION_GRAPHICS ||
+                    stream_type == STREAM_TYPE_INTERACTIVE_GRAPHICS) &&
+                   descriptor_start + 5 <= clip_offset + clip_size) {
             normalize_lang_code(&data[descriptor_start + 2], lang);
             if (!probe_result_upsert_pg_stream(result,
                                                pid,
@@ -756,7 +869,7 @@ static int parse_clpi_streams(const char *disc_path,
                 free(data);
                 return 0;
             }
-            found_any = 1;
+            found_pg = 1;
         }
 
         stream_offset = descriptor_next;
@@ -764,41 +877,308 @@ static int parse_clpi_streams(const char *disc_path,
 
     probe_result_set_clip(result, clip_id, result->clip_ref);
     free(data);
-    return found_any;
+    return found_pg;
 }
 
-static size_t parse_m2ts_packet_payload_size(const uint8_t *packet, uint16_t *out_pid)
+static SCAN_PID_STATE *find_scan_state(SCAN_PID_STATE *states, size_t count, uint16_t pid)
 {
-    const uint8_t *ts;
-    uint8_t adaptation_control;
-    size_t payload_pos = 4;
+    size_t i;
 
-    if (out_pid) {
-        *out_pid = 0;
+    if (!states || pid == 0) {
+        return NULL;
     }
-    if (!packet || packet[M2TS_TS_SYNC_OFFSET] != 0x47) {
-        return 0;
-    }
-
-    ts = packet + M2TS_TS_SYNC_OFFSET;
-    if (out_pid) {
-        *out_pid = (uint16_t)(((uint16_t)(ts[1] & 0x1f) << 8) | ts[2]);
-    }
-
-    adaptation_control = (uint8_t)((ts[3] >> 4) & 0x03);
-    if (adaptation_control == 0 || adaptation_control == 2) {
-        return 0;
-    }
-    if (adaptation_control == 3) {
-        payload_pos += 1u + (size_t)ts[payload_pos];
-        if (payload_pos > TS_PACKET_SIZE) {
-            return 0;
+    for (i = 0; i < count; i++) {
+        if (states[i].pid == pid) {
+            return &states[i];
         }
     }
-    if (payload_pos >= TS_PACKET_SIZE) {
+    return NULL;
+}
+
+static void probe_result_update_clip_packet_seconds(PROBE_RESULT *result,
+                                                    double stream_time,
+                                                    double stream_interval)
+{
+    double clip_in;
+    double clip_out;
+    double stream_offset;
+
+    if (!result) {
+        return;
+    }
+
+    clip_in = (double)result->clip_in_time_ticks / 45000.0;
+    clip_out = (double)result->clip_out_time_ticks / 45000.0;
+    stream_offset = stream_time + stream_interval;
+
+    if (stream_time != 0.0 &&
+        (stream_time < clip_in || stream_time > clip_out)) {
+        return;
+    }
+    if (stream_offset > clip_in &&
+        stream_offset - clip_in > result->clip_packet_seconds) {
+        result->clip_packet_seconds = stream_offset - clip_in;
+    }
+}
+
+static int scan_state_header_matches(const SCAN_PID_STATE *state)
+{
+    if (!state) {
         return 0;
     }
-    return TS_PACKET_SIZE - payload_pos;
+
+    if (state->kind == SCAN_KIND_VIDEO) {
+        return state->parse == 0x000001FDu ||
+               (state->parse >= 0x000001E0u && state->parse <= 0x000001EFu);
+    }
+
+    return state->parse == 0x000001FAu ||
+           state->parse == 0x000001FDu ||
+           state->parse == 0x000001BDu ||
+           (state->parse >= 0x000001E0u && state->parse <= 0x000001EFu);
+}
+
+static void scan_state_process_timestamp(PROBE_RESULT *result,
+                                         SCAN_PID_STATE *state,
+                                         uint64_t current_dts)
+{
+    double stream_time;
+    double stream_interval;
+
+    if (!result || !state || state->kind != SCAN_KIND_VIDEO) {
+        return;
+    }
+
+    stream_time = (double)current_dts / 90000.0;
+    stream_interval = (double)(current_dts - state->dts_prev) / 90000.0;
+
+    if (state->pts_count > 0) {
+        probe_result_update_clip_packet_seconds(result, stream_time, stream_interval);
+    }
+
+    state->dts_prev = current_dts;
+    state->pts_count++;
+}
+
+static void scan_state_process_payload_byte(PROBE_RESULT *result,
+                                            SCAN_PID_STATE *state,
+                                            uint8_t value)
+{
+    if (!state) {
+        return;
+    }
+
+    state->parse = (state->parse << 8) | (uint32_t)value;
+
+    if (state->transfer_state) {
+        if (state->kind == SCAN_KIND_GRAPHICS && state->pg_stream) {
+            state->pg_stream->payload_bytes++;
+        }
+        if (!state->packet_length_variable) {
+            if (state->packet_length > 0) {
+                state->packet_length--;
+            }
+            if (state->packet_length <= 0) {
+                state->packet_length = 0;
+                state->transfer_state = 0;
+            }
+        }
+        return;
+    }
+
+    if (scan_state_header_matches(state)) {
+        state->packet_length_parse = 2;
+        state->packet_length = 0;
+        state->packet_length_variable = 0;
+        return;
+    }
+
+    if (state->packet_length_parse > 0) {
+        state->packet_length_parse--;
+        switch (state->packet_length_parse) {
+        case 1:
+            state->packet_length = ((int)(state->parse & 0xFFu)) << 8;
+            break;
+        case 0:
+            state->packet_length |= (int)(state->parse & 0xFFu);
+            if (state->packet_length == 0) {
+                state->packet_length_variable = 1;
+            }
+            state->packet_parse = 3;
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
+    if (state->packet_parse > 0) {
+        if (!state->packet_length_variable && state->packet_length > 0) {
+            state->packet_length--;
+        }
+        state->packet_parse--;
+        switch (state->packet_parse) {
+        case 1:
+            state->pes_header_flags = (uint8_t)(state->parse & 0xFFu);
+            break;
+        case 0:
+            state->pes_header_length = (uint8_t)(state->parse & 0xFFu);
+            if ((state->pes_header_flags & 0xC0u) == 0x80u) {
+                state->pts_parse = 5;
+            } else if ((state->pes_header_flags & 0xC0u) == 0xC0u) {
+                state->dts_parse = 10;
+            } else if (state->pes_header_length == 0) {
+                state->transfer_state = 1;
+            }
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
+    if (state->pts_parse > 0) {
+        if (!state->packet_length_variable && state->packet_length > 0) {
+            state->packet_length--;
+        }
+        if (state->pes_header_length > 0) {
+            state->pes_header_length--;
+        }
+        state->pts_parse--;
+
+        switch (state->pts_parse) {
+        case 4:
+            state->pts_temp = (uint64_t)(state->parse & 0x0Eu) << 29;
+            break;
+        case 3:
+            state->pts_temp |= (uint64_t)(state->parse & 0xFFu) << 22;
+            break;
+        case 2:
+            state->pts_temp |= (uint64_t)(state->parse & 0xFEu) << 14;
+            break;
+        case 1:
+            state->pts_temp |= (uint64_t)(state->parse & 0xFFu) << 7;
+            break;
+        case 0:
+            state->pts_temp |= (uint64_t)((state->parse & 0xFEu) >> 1);
+            state->pts_last = state->pts_temp;
+            if (state->kind == SCAN_KIND_VIDEO) {
+                scan_state_process_timestamp(result, state, state->pts_temp);
+            }
+            if (state->pes_header_length == 0 && state->dts_parse == 0) {
+                state->transfer_state = 1;
+            }
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
+    if (state->dts_parse > 0) {
+        if (!state->packet_length_variable && state->packet_length > 0) {
+            state->packet_length--;
+        }
+        if (state->pes_header_length > 0) {
+            state->pes_header_length--;
+        }
+        state->dts_parse--;
+
+        switch (state->dts_parse) {
+        case 9:
+            state->pts_temp = (uint64_t)(state->parse & 0x0Eu) << 29;
+            break;
+        case 8:
+            state->pts_temp |= (uint64_t)(state->parse & 0xFFu) << 22;
+            break;
+        case 7:
+            state->pts_temp |= (uint64_t)(state->parse & 0xFEu) << 14;
+            break;
+        case 6:
+            state->pts_temp |= (uint64_t)(state->parse & 0xFFu) << 7;
+            break;
+        case 5:
+            state->pts_temp |= (uint64_t)((state->parse & 0xFEu) >> 1);
+            state->pts_last = state->pts_temp;
+            break;
+        case 4:
+            state->dts_temp = (uint64_t)(state->parse & 0x0Eu) << 29;
+            break;
+        case 3:
+            state->dts_temp |= (uint64_t)(state->parse & 0xFFu) << 22;
+            break;
+        case 2:
+            state->dts_temp |= (uint64_t)(state->parse & 0xFEu) << 14;
+            break;
+        case 1:
+            state->dts_temp |= (uint64_t)(state->parse & 0xFFu) << 7;
+            break;
+        case 0:
+            state->dts_temp |= (uint64_t)((state->parse & 0xFEu) >> 1);
+            if (state->kind == SCAN_KIND_VIDEO) {
+                scan_state_process_timestamp(result, state, state->dts_temp);
+            }
+            if (state->pes_header_length == 0) {
+                state->transfer_state = 1;
+            }
+            break;
+        default:
+            break;
+        }
+        return;
+    }
+
+    if (state->pes_header_length > 0) {
+        if (!state->packet_length_variable && state->packet_length > 0) {
+            state->packet_length--;
+        }
+        state->pes_header_length--;
+        if (state->pes_header_length == 0) {
+            state->transfer_state = 1;
+        }
+    }
+}
+
+static SCAN_PID_STATE *probe_result_build_scan_states(PROBE_RESULT *result, size_t *out_count)
+{
+    SCAN_PID_STATE *states;
+    size_t count;
+    size_t index = 0;
+    size_t i;
+
+    if (out_count) {
+        *out_count = 0;
+    }
+    if (!result) {
+        return NULL;
+    }
+
+    count = result->video_stream_count + result->pg_stream_count;
+    if (count == 0) {
+        return NULL;
+    }
+
+    states = (SCAN_PID_STATE *)calloc(count, sizeof(SCAN_PID_STATE));
+    if (!states) {
+        return NULL;
+    }
+
+    for (i = 0; i < result->video_stream_count; i++) {
+        states[index].pid = result->video_streams[i];
+        states[index].kind = SCAN_KIND_VIDEO;
+        index++;
+    }
+    for (i = 0; i < result->pg_stream_count; i++) {
+        states[index].pid = result->pg_streams[i].pid;
+        states[index].kind = SCAN_KIND_GRAPHICS;
+        states[index].pg_stream = &result->pg_streams[i];
+        index++;
+    }
+
+    if (out_count) {
+        *out_count = count;
+    }
+    return states;
 }
 
 static int probe_result_scan_clip_pg_bitrates(const char *disc_path, PROBE_RESULT *result)
@@ -806,27 +1186,57 @@ static int probe_result_scan_clip_pg_bitrates(const char *disc_path, PROBE_RESUL
     char *path = NULL;
     uint8_t *buffer = NULL;
     FILE *file = NULL;
+    SCAN_PID_STATE *states = NULL;
+    size_t state_count = 0;
     size_t carry = 0;
+    size_t i;
     int success = 0;
 
     if (!disc_path || !result || result->clip_id[0] == '\0' || result->pg_stream_count == 0) {
         return 0;
     }
-
-    path = build_disc_file_path(disc_path, "STREAM", result->clip_id, ".m2ts");
-    if (!path) {
+    if (result->video_stream_count == 0) {
+        log_stagef("bdsub bitrate scan skipped: no video PID found for clip %s", result->clip_id);
         return 0;
     }
 
+    for (i = 0; i < result->pg_stream_count; i++) {
+        result->pg_streams[i].payload_bytes = 0;
+        result->pg_streams[i].bitrate = 0;
+    }
+    result->clip_packet_seconds = 0.0;
+    result->bitrate_scanned = 0;
+    probe_result_set_bitrate_mode(result, "");
+
+    states = probe_result_build_scan_states(result, &state_count);
+    if (!states) {
+        return 0;
+    }
+
+    path = build_disc_file_path(disc_path, "STREAM", result->clip_id, ".m2ts");
+    if (!path) {
+        free(states);
+        return 0;
+    }
+
+    log_stagef("start bitrate scan: playlist=%05u clip=%s mode=bdinfo-tsstreamfile",
+               result->playlist,
+               result->clip_id);
+    log_stagef("scan target: %s", path);
+
     file = fopen(path, "rb");
-    free(path);
     if (!file) {
+        log_stagef("bitrate scan failed: unable to open %s", path);
+        free(path);
+        free(states);
         return 0;
     }
 
     buffer = (uint8_t *)malloc(M2TS_READ_CHUNK + M2TS_PACKET_SIZE);
     if (!buffer) {
         fclose(file);
+        free(path);
+        free(states);
         return 0;
     }
 
@@ -837,12 +1247,67 @@ static int probe_result_scan_clip_pg_bitrates(const char *disc_path, PROBE_RESUL
         size_t offset = 0;
 
         while (offset + M2TS_PACKET_SIZE <= total) {
-            uint16_t pid = 0;
-            size_t payload_size = parse_m2ts_packet_payload_size(buffer + offset, &pid);
-            PG_STREAM_INFO *stream = probe_result_find_pg_stream(result, pid);
-            if (stream && payload_size > 0) {
-                stream->payload_bytes += (uint64_t)payload_size;
+            const uint8_t *packet = buffer + offset;
+            const uint8_t *ts;
+            SCAN_PID_STATE *state;
+            uint16_t pid;
+            uint8_t adaptation_control;
+            uint8_t payload_unit_start;
+            size_t payload_pos = 4;
+            size_t payload_index;
+
+            if (packet[M2TS_TS_SYNC_OFFSET] != 0x47) {
+                log_stagef("bitrate scan failed: invalid sync byte in %s", path);
+                goto cleanup;
             }
+
+            ts = packet + M2TS_TS_SYNC_OFFSET;
+            pid = (uint16_t)(((uint16_t)(ts[1] & 0x1f) << 8) | ts[2]);
+            state = find_scan_state(states, state_count, pid);
+            if (!state) {
+                offset += M2TS_PACKET_SIZE;
+                continue;
+            }
+
+            adaptation_control = (uint8_t)((ts[3] >> 4) & 0x03);
+            payload_unit_start = (uint8_t)((ts[1] >> 6) & 0x01);
+            if (adaptation_control == 0 || adaptation_control == 2) {
+                offset += M2TS_PACKET_SIZE;
+                continue;
+            }
+            if (adaptation_control == 3) {
+                payload_pos += 1u + (size_t)ts[payload_pos];
+                if (payload_pos > TS_PACKET_SIZE) {
+                    offset += M2TS_PACKET_SIZE;
+                    continue;
+                }
+            }
+            if (payload_pos >= TS_PACKET_SIZE) {
+                offset += M2TS_PACKET_SIZE;
+                continue;
+            }
+
+            if (payload_unit_start && state->transfer_state) {
+                state->transfer_state = 0;
+            }
+            if (payload_unit_start) {
+                state->packet_length = 0;
+                state->packet_length_variable = 0;
+                state->packet_length_parse = 0;
+                state->packet_parse = 0;
+                state->pes_header_length = 0;
+                state->pes_header_flags = 0;
+                state->pts_parse = 0;
+                state->pts_temp = 0;
+                state->dts_parse = 0;
+                state->dts_temp = 0;
+                state->parse = 0;
+            }
+
+            for (payload_index = payload_pos; payload_index < TS_PACKET_SIZE; payload_index++) {
+                scan_state_process_payload_byte(result, state, ts[payload_index]);
+            }
+
             offset += M2TS_PACKET_SIZE;
         }
 
@@ -854,11 +1319,20 @@ static int probe_result_scan_clip_pg_bitrates(const char *disc_path, PROBE_RESUL
 
     if (ferror(file) == 0) {
         probe_result_finalize_pg_bitrates(result);
+        result->bitrate_scanned = 1;
+        probe_result_set_bitrate_mode(result, "bdinfo-tsstreamfile");
+        log_stagef("finish bitrate scan: clip=%s packet_seconds=%.3f pg_streams=%zu",
+                   result->clip_id,
+                   result->clip_packet_seconds,
+                   result->pg_stream_count);
         success = 1;
     }
 
+cleanup:
     free(buffer);
     fclose(file);
+    free(path);
+    free(states);
     return success;
 }
 
@@ -870,10 +1344,14 @@ static void print_probe_result_json(const char *disc_path, const PROBE_RESULT *r
     printf("{");
     printf("\"source\":");
     json_print_string(result && result->source[0] ? result->source : "unknown");
+    printf(",\"bitrate_scanned\":%s", result && result->bitrate_scanned ? "true" : "false");
+    printf(",\"bitrate_mode\":");
+    json_print_string(result && result->bitrate_mode[0] ? result->bitrate_mode : "");
     printf(",\"clip\":{");
     printf("\"clip_id\":");
     json_print_string(result && result->clip_id[0] ? result->clip_id : "");
     printf(",\"pg_stream_count\":%zu", result ? result->pg_stream_count : 0u);
+    printf(",\"packet_seconds\":%.3f", result ? result->clip_packet_seconds : 0.0);
     printf(",\"pg_streams\":[");
     if (result) {
         for (i = 0; i < result->pg_stream_count; i++) {
@@ -902,6 +1380,7 @@ int main(int argc, char **argv)
     PROBE_RESULT result;
     uint32_t playlist = 0;
     int have_playlist = 0;
+    int scan_bitrate = 0;
     int argi;
     int mpls_ok;
     int clpi_ok;
@@ -912,6 +1391,7 @@ int main(int argc, char **argv)
     }
 
     probe_result_init(&result);
+    setvbuf(stderr, NULL, _IONBF, 0);
     disc_path = argv[1];
 
     for (argi = 2; argi < argc; argi++) {
@@ -929,6 +1409,8 @@ int main(int argc, char **argv)
                 return 2;
             }
             clip_id = argv[++argi];
+        } else if (strcmp(argv[argi], "--scan-bitrate") == 0) {
+            scan_bitrate = 1;
         } else {
             fprintf(stderr, "bdinfo_style_probe: unknown argument: %s\n", argv[argi]);
             probe_result_free(&result);
@@ -962,7 +1444,13 @@ int main(int argc, char **argv)
         return 5;
     }
 
-    (void)probe_result_scan_clip_pg_bitrates(disc_path, &result);
+    if (scan_bitrate) {
+        if (!probe_result_scan_clip_pg_bitrates(disc_path, &result)) {
+            log_stagef("bitrate scan finished without usable packet timing; returning metadata only");
+        }
+    } else {
+        probe_result_set_bitrate_mode(&result, "metadata-only");
+    }
     print_probe_result_json(disc_path, &result);
     probe_result_free(&result);
     return 0;

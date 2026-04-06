@@ -375,6 +375,72 @@ func blurayHelperNeedsFFprobe(raw []subtitleTrack, helper []blurayHelperTrack) b
 	return false
 }
 
+// blurayHelperNeedsBitrateScan 判断当前蓝光 PGS 是否真的需要再次调用 bdsub 补充 bitrate。
+func blurayHelperNeedsBitrateScan(raw []subtitleTrack, helperResult blurayHelperResult, helper []blurayHelperTrack, bluray []subtitleTrack, blurayMode string) bool {
+	if helperResult.BitrateScanned || len(helper) == 0 {
+		return false
+	}
+
+	helperByPID := make(map[int]blurayHelperTrack, len(helper))
+	for _, track := range helper {
+		helperByPID[track.PID] = track
+	}
+
+	langCounts := make(map[string]int, 4)
+	for index, track := range raw {
+		if bitmapSubtitleKindFromCodec(track.Codec) != bitmapSubtitlePGS {
+			continue
+		}
+
+		langForPick := track.Language
+		titleForPick := track.Title
+		helperMetaOK := false
+
+		if pid, ok := normalizeStreamPID(track.StreamID); ok {
+			if meta, exists := helperByPID[pid]; exists {
+				helperMetaOK = true
+				if strings.TrimSpace(meta.Lang) != "" {
+					langForPick = strings.ToLower(strings.TrimSpace(meta.Lang))
+				}
+			}
+		}
+		if !helperMetaOK && len(helper) == len(raw) && index < len(helper) {
+			helperMetaOK = true
+			if strings.TrimSpace(helper[index].Lang) != "" {
+				langForPick = strings.ToLower(strings.TrimSpace(helper[index].Lang))
+			}
+		}
+		if !helperMetaOK {
+			continue
+		}
+
+		if (blurayMode == "ffprobe" || blurayMode == "helper+ffprobe") && index < len(bluray) {
+			needsSupplement := blurayMode == "ffprobe" || subtitleNeedsBluraySupplement(langForPick, titleForPick)
+			if needsSupplement {
+				if bluray[index].Language != "" && bluray[index].Language != "unknown" {
+					langForPick = bluray[index].Language
+				}
+				if bluray[index].Title != "" {
+					titleForPick = bluray[index].Title
+				}
+			} else if strings.TrimSpace(titleForPick) == "" && bluray[index].Title != "" {
+				titleForPick = bluray[index].Title
+			}
+		}
+
+		langClass := classifySubtitleLanguage(strings.TrimSpace(langForPick + " " + titleForPick))
+		if langClass == "" {
+			continue
+		}
+		langCounts[langClass]++
+		if langCounts[langClass] > 1 {
+			return true
+		}
+	}
+
+	return false
+}
+
 // subtitleNeedsBluraySupplement 判断当前语言信息是否不足以区分蓝光字幕优先级。
 func subtitleNeedsBluraySupplement(lang, title string) bool {
 	class := classifySubtitleLanguage(strings.TrimSpace(lang + " " + title))
@@ -467,8 +533,9 @@ func preferPreferredSubtitleRank(current, best preferredSubtitleRank) bool {
 	}
 	if current.LangClass != "" &&
 		current.LangClass == best.LangClass &&
-		current.UseBitrate &&
-		best.UseBitrate &&
+		current.BitmapKind == bitmapSubtitlePGS &&
+		best.BitmapKind == bitmapSubtitlePGS &&
+		(current.UseBitrate || best.UseBitrate) &&
 		current.Bitrate != best.Bitrate {
 		return current.Bitrate > best.Bitrate
 	}
