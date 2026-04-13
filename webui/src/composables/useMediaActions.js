@@ -206,8 +206,8 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
     const applyInfoProgress = (label, action, status, progress = null) => {
         const message = buildInfoProgressMessage(label, status);
         setBusy(true, message, action);
-        if (action === "mediainfo") {
-            setTaskProgress(null);
+        if (action === "mediainfo" || isTerminalTaskStatus(status)) {
+            clearTaskProgress();
             return;
         }
         setTaskProgress(resolveTaskProgress(progress, buildInfoFallbackProgress(label, status)));
@@ -216,6 +216,10 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
     const applyDownloadProgress = (status, progress = null) => {
         const message = buildDownloadProgressMessage(status);
         setBusy(true, message, "download-shots");
+        if (isTerminalTaskStatus(status)) {
+            clearTaskProgress();
+            return;
+        }
         setTaskProgress(resolveTaskProgress(progress, buildDownloadFallbackProgress(status)));
     };
 
@@ -223,6 +227,10 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
         const message = buildLinkProgressMessage(action, status);
         setBusy(true, message, action);
         setLinkStatusText(message);
+        if (isTerminalTaskStatus(status)) {
+            clearTaskProgress();
+            return;
+        }
         setTaskProgress(resolveTaskProgress(progress, buildLinkFallbackProgress(status)));
     };
 
@@ -671,6 +679,10 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
 
 function normalizeTargetPath(value) {
     return typeof value === "string" ? value.trim() : "";
+}
+
+function isTerminalTaskStatus(status) {
+    return status === "succeeded" || status === "failed" || status === "canceled";
 }
 
 function buildAsyncJobError(job = {}) {
