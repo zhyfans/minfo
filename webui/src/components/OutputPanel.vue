@@ -8,6 +8,7 @@
             </div>
         </div>
         <div class="output-body">
+            <TaskProgressBar v-if="taskProgress" :progress="taskProgress" />
             <div v-if="outputText !== ''" class="output-text">
                 <pre>{{ outputText }}</pre>
             </div>
@@ -19,11 +20,14 @@
 </template>
 
 <script setup>
+import TaskProgressBar from "./TaskProgressBar.vue";
+
 defineProps({
     busy: { type: Boolean, required: true },
     copyOutputLabel: { type: String, required: true },
     outputText: { type: String, required: true },
     statusMessage: { type: String, required: true },
+    taskProgress: { type: Object, default: null },
 });
 
 defineEmits(["copy", "clear"]);

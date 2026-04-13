@@ -195,12 +195,18 @@ func (w *lineRelayWriter) Flush() {
 func (w *lineRelayWriter) flushCompleteLinesLocked() {
 	data := w.buffer.Bytes()
 	start := 0
-	for idx, ch := range data {
-		if ch != '\n' {
+	for idx := 0; idx < len(data); idx++ {
+		ch := data[idx]
+		if ch != '\n' && ch != '\r' {
 			continue
 		}
 		line := strings.TrimRight(string(data[start:idx]), "\r")
 		w.onLine(w.stream, line)
+		if ch == '\r' && idx+1 < len(data) && data[idx+1] == '\n' {
+			start = idx + 2
+			idx++
+			continue
+		}
 		start = idx + 1
 	}
 	if start == 0 {

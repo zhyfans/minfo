@@ -261,6 +261,7 @@ func (j *screenshotJob) run() {
 // snapshot 会生成当前任务的安全快照，供 HTTP 接口直接返回。
 func (j *screenshotJob) snapshot() transport.ScreenshotJobResponse {
 	j.mu.RLock()
+	count := j.count
 	response := transport.ScreenshotJobResponse{
 		OK:          true,
 		JobID:       j.id,
@@ -273,10 +274,13 @@ func (j *screenshotJob) snapshot() transport.ScreenshotJobResponse {
 	logger := j.logger
 	j.mu.RUnlock()
 
+	var entries []transport.LogEntry
 	if logger != nil {
 		response.Logs = logger.String()
-		response.LogEntries = logger.Entries()
+		entries = logger.Entries()
+		response.LogEntries = entries
 	}
+	response.Progress = buildScreenshotTaskProgress(response.Mode, response.Status, count, response.LogEntries)
 	return response
 }
 

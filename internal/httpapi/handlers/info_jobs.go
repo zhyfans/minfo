@@ -275,10 +275,13 @@ func (j *infoJob) snapshot() transport.InfoJobResponse {
 	logger := j.logger
 	j.mu.RUnlock()
 
+	var entries []transport.LogEntry
 	if logger != nil {
 		response.Logs = logger.String()
-		response.LogEntries = logger.Entries()
+		entries = logger.Entries()
+		response.LogEntries = entries
 	}
+	response.Progress = buildInfoTaskProgress(response.Kind, response.Status, entries)
 	return response
 }
 

@@ -150,6 +150,7 @@ function normalizeInfoJobPayload(data = {}) {
         error: typeof data.error === "string" ? data.error : "",
         logs: typeof data.logs === "string" ? data.logs : "",
         logEntries: normalizeLogEntries(data.log_entries),
+        progress: normalizeTaskProgress(data.progress),
     };
 }
 
@@ -165,5 +166,34 @@ function normalizeScreenshotJobPayload(data = {}) {
         error: typeof data.error === "string" ? data.error : "",
         logs: typeof data.logs === "string" ? data.logs : "",
         logEntries: normalizeLogEntries(data.log_entries),
+        progress: normalizeTaskProgress(data.progress),
+    };
+}
+
+function normalizeTaskProgress(progress) {
+    if (!progress || typeof progress !== "object") {
+        return null;
+    }
+
+    const percent = Number.isFinite(progress.percent)
+        ? Math.min(100, Math.max(0, Number(progress.percent)))
+        : 0;
+    const stage = typeof progress.stage === "string" ? progress.stage : "";
+    const detail = typeof progress.detail === "string" ? progress.detail : "";
+    const current = Number.isFinite(progress.current) && progress.current > 0 ? Math.round(progress.current) : 0;
+    const total = Number.isFinite(progress.total) && progress.total > 0 ? Math.round(progress.total) : 0;
+    const indeterminate = progress.indeterminate === true;
+
+    if (percent === 0 && stage === "" && detail === "" && current === 0 && total === 0 && !indeterminate) {
+        return null;
+    }
+
+    return {
+        percent,
+        stage,
+        detail,
+        current,
+        total,
+        indeterminate,
     };
 }

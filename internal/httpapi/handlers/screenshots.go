@@ -166,6 +166,7 @@ func prepareScreenshotZipDownload(ctx context.Context, path, tempDir, variant, s
 		return "", logs, err
 	}
 
+	screenshot.EmitProgressLog(onLog, "整理", 4, 4, "正在写入下载缓存。")
 	token, err := screenshot.SavePreparedDownload(zipBytes)
 	if err != nil {
 		return "", logs, err
@@ -196,10 +197,12 @@ func generateScreenshotZip(ctx context.Context, path, tempDir, variant, subtitle
 		return nil, result.Logs, err
 	}
 
+	screenshot.EmitProgressLog(onLog, "整理", 2, 4, "正在压缩截图文件。")
 	zipBytes, err := screenshot.ZipFiles(result.Files)
 	if err != nil {
 		return nil, result.Logs, err
 	}
+	screenshot.EmitProgressLog(onLog, "整理", 3, 4, "截图压缩包已生成。")
 	return zipBytes, result.Logs, nil
 }
 

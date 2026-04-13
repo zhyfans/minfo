@@ -19,6 +19,7 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
     const activePanel = ref("");
     const activeTask = ref(null);
     const statusMessage = ref("");
+    const taskProgress = ref(null);
     const stoppingAction = ref("");
     const linkStatusText = ref("");
     const copyOutputStatus = ref("");
@@ -50,6 +51,10 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
         linkStatusText.value = typeof text === "string" ? text : "";
     };
 
+    const setTaskProgress = (progress) => {
+        taskProgress.value = normalizeTaskProgressPayload(progress);
+    };
+
     const clearOutputState = () => {
         setOutputText("");
     };
@@ -59,18 +64,25 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
         setLinkStatusText("");
     };
 
+    const clearTaskProgress = () => {
+        taskProgress.value = null;
+    };
+
     const hidePanels = () => {
         activePanel.value = "";
+        clearTaskProgress();
     };
 
     const activateOutputPanel = () => {
         activePanel.value = "output";
+        clearTaskProgress();
         clearLinkState();
         clearOutputState();
     };
 
     const activateImageLinksPanel = (clearLinks = true) => {
         activePanel.value = "links";
+        clearTaskProgress();
         clearOutputState();
         if (clearLinks) {
             clearLinkState();
@@ -107,6 +119,9 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
         const write = isError ? console.error : console.log;
         if (Array.isArray(logEntries) && logEntries.length > 0) {
             for (const entry of logEntries) {
+                if (isInternalProgressLog(entry?.message)) {
+                    continue;
+                }
                 write(`[${label}] ${formatStructuredConsoleLogLine(entry)}`);
             }
             return;
@@ -188,22 +203,27 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
         hidePanels();
     });
 
-    const applyInfoProgress = (label, action, status) => {
+    const applyInfoProgress = (label, action, status, progress = null) => {
         const message = buildInfoProgressMessage(label, status);
         setBusy(true, message, action);
-        setOutputText(message);
+        if (action === "mediainfo") {
+            setTaskProgress(null);
+            return;
+        }
+        setTaskProgress(resolveTaskProgress(progress, buildInfoFallbackProgress(label, status)));
     };
 
-    const applyDownloadProgress = (status) => {
+    const applyDownloadProgress = (status, progress = null) => {
         const message = buildDownloadProgressMessage(status);
         setBusy(true, message, "download-shots");
-        setOutputText(message);
+        setTaskProgress(resolveTaskProgress(progress, buildDownloadFallbackProgress(status)));
     };
 
-    const applyLinkProgress = (action, status) => {
+    const applyLinkProgress = (action, status, progress = null) => {
         const message = buildLinkProgressMessage(action, status);
         setBusy(true, message, action);
         setLinkStatusText(message);
+        setTaskProgress(resolveTaskProgress(progress, buildLinkFallbackProgress(status)));
     };
 
     const stopActiveTask = async () => {
@@ -218,7 +238,7 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
         stoppingAction.value = task.action;
         try {
             const job = task.jobType === "info" ? await cancelInfoJob(task.jobId) : await cancelScreenshotJob(task.jobId);
-            applyPersistedTaskProgress(task, job.status);
+            applyPersistedTaskProgress(task, job.status, job.progress);
         } catch (err) {
             stoppingAction.value = "";
             showNotice(err?.message || "停止任务失败。");
@@ -241,6 +261,7 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
             let trackedTask = baseTask;
             if (jobId === "") {
                 const job = await createInfoJob(path.value.trim(), action === "bdinfo" ? "bdinfo" : "mediainfo", fields);
+                applyInfoProgress(label, action, job.status, job.progress);
                 trackedTask = {
                     ...baseTask,
                     jobId: job.jobId,
@@ -249,7 +270,7 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
 
             persistActiveTask(trackedTask);
             const result = await waitForAsyncJob(fetchInfoJob, trackedTask.jobId, trackedTask.logLabel, (job) => {
-                applyInfoProgress(label, action, job.status);
+                applyInfoProgress(label, action, job.status, job.progress);
             });
 
             clearPersistedActiveTask();
@@ -289,6 +310,7 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
             let trackedTask = baseTask;
             if (jobId === "") {
                 const job = await createScreenshotJob(path.value.trim(), screenshotVariant.value, screenshotSubtitleMode.value, screenshotCount.value, "zip");
+                applyDownloadProgress(job.status, job.progress);
                 trackedTask = {
                     ...baseTask,
                     jobId: job.jobId,
@@ -297,7 +319,7 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
 
             persistActiveTask(trackedTask);
             const result = await waitForAsyncJob(fetchScreenshotJob, trackedTask.jobId, trackedTask.logLabel, (job) => {
-                applyDownloadProgress(job.status);
+                applyDownloadProgress(job.status, job.progress);
             });
 
             if (typeof result.downloadURL !== "string" || result.downloadURL.trim() === "") {
@@ -348,6 +370,7 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
             let trackedTask = baseTask;
             if (jobId === "") {
                 const job = await createScreenshotJob(path.value.trim(), screenshotVariant.value, screenshotSubtitleMode.value, screenshotCount.value, "links");
+                applyLinkProgress(action, job.status, job.progress);
                 trackedTask = {
                     ...baseTask,
                     jobId: job.jobId,
@@ -356,7 +379,7 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
 
             persistActiveTask(trackedTask);
             const result = await waitForAsyncJob(fetchScreenshotJob, trackedTask.jobId, trackedTask.logLabel, (job) => {
-                applyLinkProgress(action, job.status);
+                applyLinkProgress(action, job.status, job.progress);
             });
 
             clearPersistedActiveTask();
@@ -548,6 +571,7 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
         busy,
         activeAction,
         stoppingAction,
+        taskProgress,
         noticeText,
         linkStatusText,
         copyOutputLabel,
@@ -569,20 +593,20 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
         removeLink,
     };
 
-    function applyPersistedTaskProgress(task, status) {
+    function applyPersistedTaskProgress(task, status, progress) {
         switch (task.action) {
             case "mediainfo":
-                applyInfoProgress("MediaInfo", "mediainfo", status);
+                applyInfoProgress("MediaInfo", "mediainfo", status, progress);
                 return;
             case "bdinfo":
-                applyInfoProgress("BDInfo", "bdinfo", status);
+                applyInfoProgress("BDInfo", "bdinfo", status, progress);
                 return;
             case "download-shots":
-                applyDownloadProgress(status);
+                applyDownloadProgress(status, progress);
                 return;
             case "output-links":
             case "append-links":
-                applyLinkProgress(task.action, status);
+                applyLinkProgress(task.action, status, progress);
                 return;
             default:
         }
@@ -713,6 +737,87 @@ function buildLinkProgressMessage(action, status) {
     }
 }
 
+function resolveTaskProgress(progress, fallback) {
+    return normalizeTaskProgressPayload(progress) || normalizeTaskProgressPayload(fallback);
+}
+
+function buildInfoFallbackProgress(label, status) {
+    if (label === "BDInfo") {
+        return buildFallbackTaskProgress(status, "生成 BDInfo", "正在生成 BDInfo 报告。");
+    }
+    return buildFallbackTaskProgress(status, "分析媒体信息", "正在分析媒体信息。");
+}
+
+function buildDownloadFallbackProgress(status) {
+    return buildScreenshotFallbackTaskProgress(status, "生成截图", "正在生成截图文件。");
+}
+
+function buildLinkFallbackProgress(status) {
+    return buildScreenshotFallbackTaskProgress(status, "上传图床", "正在生成截图并上传图床。");
+}
+
+function buildFallbackTaskProgress(status, runningStage, runningDetail) {
+    switch (status) {
+        case "succeeded":
+            return { percent: 100, stage: "已完成", detail: "任务执行完成。", indeterminate: false };
+        case "failed":
+            return { percent: 100, stage: "已失败", detail: "任务执行失败。", indeterminate: false };
+        case "canceled":
+            return { percent: 100, stage: "已取消", detail: "任务已取消。", indeterminate: false };
+        case "canceling":
+            return { percent: 94, stage: "正在停止", detail: "任务取消中...", indeterminate: true };
+        case "running":
+            return { percent: 12, stage: runningStage, detail: runningDetail, indeterminate: true };
+        case "pending":
+        default:
+            return { percent: 6, stage: "等待开始", detail: "任务已提交，等待执行。", indeterminate: true };
+    }
+}
+
+function buildScreenshotFallbackTaskProgress(status, runningStage, runningDetail) {
+    switch (status) {
+        case "succeeded":
+            return { percent: 100, stage: "已完成", detail: "任务执行完成。", indeterminate: false };
+        case "failed":
+            return { percent: 100, stage: "已失败", detail: "任务执行失败。", indeterminate: false };
+        case "canceled":
+            return { percent: 100, stage: "已取消", detail: "任务已取消。", indeterminate: false };
+        case "canceling":
+            return { percent: 94, stage: "正在停止", detail: "任务取消中...", indeterminate: true };
+        case "running":
+            return { percent: 0, stage: runningStage, detail: runningDetail, indeterminate: true };
+        case "pending":
+        default:
+            return { percent: 0, stage: "等待开始", detail: "任务已提交，等待执行。", indeterminate: true };
+    }
+}
+
+function normalizeTaskProgressPayload(progress) {
+    if (!progress || typeof progress !== "object") {
+        return null;
+    }
+
+    const percent = Number.isFinite(progress.percent) ? Math.min(100, Math.max(0, Number(progress.percent))) : 0;
+    const stage = typeof progress.stage === "string" ? progress.stage : "";
+    const detail = typeof progress.detail === "string" ? progress.detail : "";
+    const current = Number.isFinite(progress.current) && progress.current > 0 ? Math.round(progress.current) : 0;
+    const total = Number.isFinite(progress.total) && progress.total > 0 ? Math.round(progress.total) : 0;
+    const indeterminate = progress.indeterminate === true;
+
+    if (percent === 0 && stage === "" && detail === "" && current === 0 && total === 0 && !indeterminate) {
+        return null;
+    }
+
+    return {
+        percent,
+        stage,
+        detail,
+        current,
+        total,
+        indeterminate,
+    };
+}
+
 function resolveTaskErrorMessage(err, notFoundMessage) {
     if (isMissingTaskError(err)) {
         return notFoundMessage;
@@ -729,7 +834,7 @@ function formatConsoleLogLines(logs) {
     const normalized = `${logs}`.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
     return normalized
         .split("\n")
-        .filter((line) => line.trim() !== "")
+        .filter((line) => line.trim() !== "" && !isInternalProgressLog(line))
         .map((line) => (hasTimePrefix(line) ? line : `[${formatConsoleTime(new Date())}] ${line}`));
 }
 
@@ -747,6 +852,10 @@ function formatStructuredConsoleLogLine(entry) {
 
 function hasTimePrefix(line) {
     return /^\[\d{2}:\d{2}:\d{2}\]\s/.test(line);
+}
+
+function isInternalProgressLog(line) {
+    return typeof line === "string" && line.trim().startsWith("[进度]");
 }
 
 function formatConsoleTime(value) {

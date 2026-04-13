@@ -17,6 +17,7 @@
             </div>
         </div>
         <div class="output-body">
+            <TaskProgressBar v-if="taskProgress" :progress="taskProgress" />
             <p v-if="linkStatusText !== '' && linkItems.length > 0" class="output-note">{{ linkStatusText }}</p>
 
             <div v-if="linkItems.length > 0" class="output-links">
@@ -65,6 +66,7 @@
 
 <script setup>
 import { computed, ref, watch } from "vue";
+import TaskProgressBar from "./TaskProgressBar.vue";
 
 const props = defineProps({
     busy: { type: Boolean, required: true },
@@ -74,6 +76,7 @@ const props = defineProps({
     copyBBCodeLabel: { type: String, required: true },
     linkStatusText: { type: String, required: true },
     linkItems: { type: Array, required: true },
+    taskProgress: { type: Object, default: null },
 });
 
 const emit = defineEmits(["append-links", "stop-active", "copy-links", "copy-bbcode", "clear", "remove-link"]);

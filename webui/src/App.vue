@@ -81,6 +81,7 @@
             :copy-output-label="copyOutputLabel"
             :output-text="outputText"
             :status-message="statusMessage"
+            :task-progress="taskProgress"
             @copy="copyOutputText"
             @clear="clearOutputText"
         />
@@ -94,6 +95,7 @@
             :copy-b-b-code-label="copyBBCodeLabel"
             :link-status-text="linkStatusText"
             :link-items="linkItems"
+            :task-progress="taskProgress"
             @append-links="appendShotLinks"
             @stop-active="stopActiveTask"
             @copy-links="copyLinks"
@@ -180,6 +182,7 @@ const {
     busy,
     activeAction,
     stoppingAction,
+    taskProgress,
     noticeText,
     linkStatusText,
     copyOutputLabel,

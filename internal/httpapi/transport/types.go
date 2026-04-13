@@ -8,6 +8,16 @@ type LogEntry struct {
 	Message   string `json:"message,omitempty"`
 }
 
+// TaskProgress 表示后台任务当前阶段对应的进度信息。
+type TaskProgress struct {
+	Percent       float64 `json:"percent,omitempty"`
+	Stage         string  `json:"stage,omitempty"`
+	Detail        string  `json:"detail,omitempty"`
+	Current       int     `json:"current,omitempty"`
+	Total         int     `json:"total,omitempty"`
+	Indeterminate bool    `json:"indeterminate,omitempty"`
+}
+
 // InfoResponse 表示信息类接口共用的 JSON 响应。
 type InfoResponse struct {
 	OK         bool       `json:"ok"`
@@ -19,27 +29,29 @@ type InfoResponse struct {
 
 // ScreenshotJobResponse 表示截图后台任务的创建结果、状态查询结果和最终产出。
 type ScreenshotJobResponse struct {
-	OK          bool       `json:"ok"`
-	JobID       string     `json:"job_id,omitempty"`
-	Status      string     `json:"status,omitempty"`
-	Mode        string     `json:"mode,omitempty"`
-	Output      string     `json:"output,omitempty"`
-	DownloadURL string     `json:"download_url,omitempty"`
-	Error       string     `json:"error,omitempty"`
-	Logs        string     `json:"logs,omitempty"`
-	LogEntries  []LogEntry `json:"log_entries,omitempty"`
+	OK          bool          `json:"ok"`
+	JobID       string        `json:"job_id,omitempty"`
+	Status      string        `json:"status,omitempty"`
+	Mode        string        `json:"mode,omitempty"`
+	Output      string        `json:"output,omitempty"`
+	DownloadURL string        `json:"download_url,omitempty"`
+	Error       string        `json:"error,omitempty"`
+	Logs        string        `json:"logs,omitempty"`
+	LogEntries  []LogEntry    `json:"log_entries,omitempty"`
+	Progress    *TaskProgress `json:"progress,omitempty"`
 }
 
 // InfoJobResponse 表示信息类后台任务的创建结果、状态查询结果和最终输出。
 type InfoJobResponse struct {
-	OK         bool       `json:"ok"`
-	JobID      string     `json:"job_id,omitempty"`
-	Status     string     `json:"status,omitempty"`
-	Kind       string     `json:"kind,omitempty"`
-	Output     string     `json:"output,omitempty"`
-	Error      string     `json:"error,omitempty"`
-	Logs       string     `json:"logs,omitempty"`
-	LogEntries []LogEntry `json:"log_entries,omitempty"`
+	OK         bool          `json:"ok"`
+	JobID      string        `json:"job_id,omitempty"`
+	Status     string        `json:"status,omitempty"`
+	Kind       string        `json:"kind,omitempty"`
+	Output     string        `json:"output,omitempty"`
+	Error      string        `json:"error,omitempty"`
+	Logs       string        `json:"logs,omitempty"`
+	LogEntries []LogEntry    `json:"log_entries,omitempty"`
+	Progress   *TaskProgress `json:"progress,omitempty"`
 }
 
 // PathItem 表示路径联想接口返回的一条候选路径。
