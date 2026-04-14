@@ -164,7 +164,6 @@ HTTP 请求
 - `/api/screenshot-jobs`
 - `/api/screenshots`
 - `/api/path`
-- `/api/logs`
 
 ### `internal/httpapi/middleware/auth.go`
 
@@ -241,39 +240,7 @@ HTTP 请求
 
 ---
 
-## 6.4 实时日志机制
-
-### `internal/httpapi/logstream/logstream.go`
-
-该文件实现了一个轻量级日志会话中心，主要功能包括：
-
-- 按 `sessionID` 维护日志会话
-- 缓存历史日志
-- 为多个订阅者广播实时日志
-- 在会话关闭后保留短时间历史记录，便于断线重连
-
-核心类型包括：
-
-- `Session`
-- `Event`
-- `hub`
-- `sessionState`
-- `subscriber`
-
-### `internal/httpapi/logstream/websocket.go`
-
-该文件基于标准库手写了最小化 WebSocket 实现，负责：
-
-- 执行升级握手
-- 校验同源
-- 发送 JSON 文本帧
-- 接收并丢弃客户端帧
-
-该实现的目的不是通用 WebSocket 支持，而是为实时日志场景提供最小依赖的传输层。
-
----
-
-## 6.5 媒体路径解析模块
+## 6.4 媒体路径解析模块
 
 ### 模块职责
 
@@ -336,7 +303,7 @@ HTTP 请求
 
 ---
 
-## 6.6 外部命令执行模块
+## 6.5 外部命令执行模块
 
 ### `internal/system/exec.go`
 
@@ -369,7 +336,7 @@ HTTP 请求
 
 ---
 
-## 6.7 BDInfo 模块
+## 6.6 BDInfo 模块
 
 ### `internal/bdinfo/service.go`
 
@@ -396,7 +363,7 @@ HTTP 请求
 
 ---
 
-## 6.8 截图模块
+## 6.7 截图模块
 
 ### 模块职责
 
@@ -473,7 +440,7 @@ HTTP 请求
 
 ---
 
-## 6.9 实时任务与截图模块中最值得优先阅读的函数
+## 6.8 实时任务与截图模块中最值得优先阅读的函数
 
 为便于源码阅读，建议优先关注以下函数：
 
@@ -595,4 +562,3 @@ main
 - 字幕驱动的截图执行链路
 
 从维护与扩展角度看，`internal/media` 与 `internal/screenshot` 是最关键的两个模块；从系统联动角度看，`system`、`bdinfo` 与 `tools/bdsub_probe.c` 是保障外部工具协同工作的基础。
-
