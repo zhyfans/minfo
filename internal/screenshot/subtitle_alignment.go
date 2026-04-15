@@ -150,6 +150,37 @@ func (r *screenshotRunner) detectVideoDimensions() (int, int) {
 	return width, height
 }
 
+// detectBitmapSubtitleCanvasDimensions 会读取当前位图字幕流声明的画布尺寸。
+func (r *screenshotRunner) detectBitmapSubtitleCanvasDimensions() (int, int) {
+	if r == nil || r.subtitle.Mode != "internal" || !r.isSupportedBitmapSubtitle() || r.subtitle.RelativeIndex < 0 {
+		return 0, 0
+	}
+
+	stdout, _, err := system.RunCommand(r.ctx, r.ffprobeBin,
+		"-v", "error",
+		"-select_streams", fmt.Sprintf("s:%d", r.subtitle.RelativeIndex),
+		"-show_entries", "stream=width,height",
+		"-of", "csv=p=0:s=x",
+		r.sourcePath,
+	)
+	if err != nil {
+		return 0, 0
+	}
+
+	value := strings.TrimSpace(strings.SplitN(stdout, "\n", 2)[0])
+	parts := strings.Split(value, "x")
+	if len(parts) != 2 {
+		return 0, 0
+	}
+
+	width, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	height, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err1 != nil || err2 != nil || width <= 0 || height <= 0 {
+		return 0, 0
+	}
+	return width, height
+}
+
 // detectColorspace 读取视频流的色彩空间元数据，并整理成稳定键值。
 func (r *screenshotRunner) detectColorspace() string {
 	stdout, _, err := system.RunCommand(r.ctx, r.ffprobeBin,
@@ -304,8 +335,8 @@ func buildDisplayAspectFilter() string {
 	return "scale='trunc(iw*sar/2)*2:ih',setsar=1"
 }
 
-// detectDisplayAspectFilter 读取视频流的 SAR/DAR 元数据，并构建更适合静态截图的比例修正过滤器。
-func (r *screenshotRunner) detectDisplayAspectFilter() string {
+// detectDisplayGeometry 读取视频流的 SAR/DAR 元数据，并构建更适合静态截图的比例修正链和输出尺寸。
+func (r *screenshotRunner) detectDisplayGeometry() (string, int, int) {
 	stdout, _, err := system.RunCommand(r.ctx, r.ffprobeBin,
 		"-v", "error",
 		"-select_streams", "v:0",
@@ -314,7 +345,7 @@ func (r *screenshotRunner) detectDisplayAspectFilter() string {
 		r.sourcePath,
 	)
 	if err != nil {
-		return buildDisplayAspectFilter()
+		return buildDisplayAspectFilter(), r.videoWidth, r.videoHeight
 	}
 
 	width := 0
@@ -349,12 +380,20 @@ func (r *screenshotRunner) detectDisplayAspectFilter() string {
 		)
 		if width2, height2, filter, ok := r.detectDVDDisplayAspectFilterFromMediaInfo(width, height); ok {
 			r.logf("[信息] DVD 比例修正将直接使用 mediainfo DAR：%s", filter)
-			return buildDisplayAspectFilterForMetadata(width2, height2, "", filter)
+			displayWidth, displayHeight := detectDisplayDimensionsForMetadata(width2, height2, "", filter)
+			return buildDisplayAspectFilterForMetadata(width2, height2, "", filter), displayWidth, displayHeight
 		}
 		r.logf("[提示] mediainfo 未提供可用 DVD 比例，回退 ffprobe SAR/DAR。")
 	}
 
-	return buildDisplayAspectFilterForMetadata(width, height, sar, dar)
+	displayWidth, displayHeight := detectDisplayDimensionsForMetadata(width, height, sar, dar)
+	return buildDisplayAspectFilterForMetadata(width, height, sar, dar), displayWidth, displayHeight
+}
+
+// detectDisplayAspectFilter 读取视频流的 SAR/DAR 元数据，并构建更适合静态截图的比例修正过滤器。
+func (r *screenshotRunner) detectDisplayAspectFilter() string {
+	filter, _, _ := r.detectDisplayGeometry()
+	return filter
 }
 
 // detectDVDDisplayAspectFilterFromMediaInfo 会从 mediainfo 结果中提取 DVD 比例修正所需参数。
@@ -398,6 +437,54 @@ func buildDisplayAspectFilterForMetadata(width, height int, sar, dar string) str
 		}
 	}
 	return buildDisplayAspectFilter()
+}
+
+// detectDisplayDimensionsForMetadata 根据视频宽高和比例元数据估算最终截图尺寸。
+func detectDisplayDimensionsForMetadata(width, height int, sar, dar string) (int, int) {
+	if width <= 0 || height <= 0 {
+		return 0, 0
+	}
+
+	normalizedDAR := normalizeMediaInfoAspectRatio(dar)
+	if darNum, darDen, ok := parseAspectRatio(normalizedDAR); ok {
+		rawAspect := float64(width) / float64(height)
+		displayAspect := float64(darNum) / float64(darDen)
+		if math.Abs(displayAspect-rawAspect) > 0.02 {
+			return evenFloorDimension(float64(height) * displayAspect), height
+		}
+	} else if displayAspect, ok := parseAspectRatioValue(normalizedDAR); ok {
+		rawAspect := float64(width) / float64(height)
+		if math.Abs(displayAspect-rawAspect) > 0.02 {
+			return evenFloorDimension(float64(height) * displayAspect), height
+		}
+	}
+
+	if sarNum, sarDen, ok := parseAspectRatio(sar); ok {
+		if sarNum == sarDen {
+			return width, height
+		}
+		return evenFloorDimension(float64(width) * float64(sarNum) / float64(sarDen)), height
+	}
+
+	return width, height
+}
+
+// evenFloorDimension 会把尺寸向下规整为正偶数值。
+func evenFloorDimension(value float64) int {
+	if value <= 0 {
+		return 0
+	}
+	size := int(math.Floor(value))
+	if size <= 0 {
+		return 0
+	}
+	if size%2 != 0 {
+		size--
+	}
+	if size <= 0 {
+		size = 2
+	}
+	return size
 }
 
 // parseAspectRatio 会把类似 16:9 的宽高比文本解析为整数分子分母。

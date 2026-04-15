@@ -262,6 +262,9 @@ func (r *screenshotRunner) captureBitmapProbeFrame(inputPath string, localTime f
 			r.subtitle.RelativeIndex,
 			r.displayAspectFilter(),
 		)
+		if r.isPGSSubtitle() {
+			filterComplex = r.buildPGSOverlayFilterComplex(r.displayAspectFilter(), "format=gray")
+		}
 		args = append(args,
 			"-filter_complex", filterComplex,
 			"-map", "[out]",
@@ -285,7 +288,7 @@ func (r *screenshotRunner) captureBitmapProbeFrame(inputPath string, localTime f
 
 // capturePGSPrimary 复用内部位图字幕主流程渲染 PGS 截图。
 func (r *screenshotRunner) capturePGSPrimary(coarseHMS string, fineSecond float64, path string) error {
-	return r.captureInternalBitmapPrimary(coarseHMS, fineSecond, path)
+	return r.capturePGSBitmapWithOutputArgs(coarseHMS, fineSecond, r.primaryOutputArgs(), path)
 }
 
 // captureDVDPrimary 复用内部位图字幕主流程渲染 DVD 截图。
@@ -313,6 +316,27 @@ func (r *screenshotRunner) captureInternalBitmapPrimary(coarseHMS string, fineSe
 		"-y",
 	}
 	args = append(args, r.primaryOutputArgs()...)
+	args = append(args, path)
+	return r.runFFmpeg(args, fineSecond)
+}
+
+// capturePGSBitmapWithOutputArgs 会在视频处理完成后再叠加 PGS 字幕并输出截图。
+func (r *screenshotRunner) capturePGSBitmapWithOutputArgs(coarseHMS string, fineSecond float64, outputArgs []string, path string) error {
+	filterComplex := r.buildPGSRenderFilterComplex()
+	args := []string{
+		"-v", "error",
+		"-fflags", "+genpts",
+		"-ss", coarseHMS,
+		"-probesize", r.settings.ProbeSize,
+		"-analyzeduration", r.settings.Analyze,
+		"-i", r.sourcePath,
+		"-ss", formatFloat(fineSecond),
+		"-filter_complex", filterComplex,
+		"-map", "[out]",
+		"-frames:v", "1",
+		"-y",
+	}
+	args = append(args, outputArgs...)
 	args = append(args, path)
 	return r.runFFmpeg(args, fineSecond)
 }
@@ -416,7 +440,11 @@ func (r *screenshotRunner) capturePNGReencoded(aligned float64, path string) err
 
 // capturePGSPNGReencoded 复用内部位图 PNG 重拍流程处理 PGS 截图。
 func (r *screenshotRunner) capturePGSPNGReencoded(coarseHMS string, fineSecond float64, path string) error {
-	return r.captureInternalBitmapPNGReencoded(coarseHMS, fineSecond, path)
+	return r.capturePGSBitmapWithOutputArgs(coarseHMS, fineSecond, []string{
+		"-c:v", "png",
+		"-compression_level", "9",
+		"-pred", "mixed",
+	}, path)
 }
 
 // captureDVDPNGReencoded 复用内部位图 PNG 重拍流程处理 DVD 截图。
@@ -495,7 +523,10 @@ func (r *screenshotRunner) captureJPGReencoded(aligned float64, path string) err
 
 // capturePGSJPGReencoded 复用内部位图 JPG 重拍流程处理 PGS 截图。
 func (r *screenshotRunner) capturePGSJPGReencoded(coarseHMS string, fineSecond float64, quality int, path string) error {
-	return r.captureInternalBitmapJPGReencoded(coarseHMS, fineSecond, quality, path)
+	return r.capturePGSBitmapWithOutputArgs(coarseHMS, fineSecond, []string{
+		"-c:v", "mjpeg",
+		"-q:v", strconv.Itoa(quality),
+	}, path)
 }
 
 // captureDVDJPGReencoded 复用内部位图 JPG 重拍流程处理 DVD 截图。
@@ -935,6 +966,70 @@ func (r *screenshotRunner) displayAspectFilter() string {
 		return r.aspectChain
 	}
 	return buildDisplayAspectFilter()
+}
+
+// bitmapSubtitleTargetSize 会返回位图字幕叠加阶段需要匹配的目标画面尺寸。
+func (r *screenshotRunner) bitmapSubtitleTargetSize() (int, int) {
+	if r == nil {
+		return 0, 0
+	}
+	if r.displayWidth > 0 && r.displayHeight > 0 {
+		return r.displayWidth, r.displayHeight
+	}
+	return r.videoWidth, r.videoHeight
+}
+
+// hasUsablePGSCanvas 会判断当前是否拿到了可用于全画布叠加的 PGS 画布尺寸。
+func (r *screenshotRunner) hasUsablePGSCanvas() bool {
+	if r == nil || !r.isPGSSubtitle() {
+		return false
+	}
+	targetWidth, targetHeight := r.bitmapSubtitleTargetSize()
+	return r.subtitleCanvasWidth > 0 && r.subtitleCanvasHeight > 0 && targetWidth > 0 && targetHeight > 0
+}
+
+// buildPGSSubtitleScaleChain 会按目标画面尺寸缩放 PGS 画布。
+func (r *screenshotRunner) buildPGSSubtitleScaleChain() string {
+	if !r.hasUsablePGSCanvas() {
+		return ""
+	}
+	targetWidth, targetHeight := r.bitmapSubtitleTargetSize()
+	if targetWidth == r.subtitleCanvasWidth && targetHeight == r.subtitleCanvasHeight {
+		return ""
+	}
+	return fmt.Sprintf("scale=%d:%d", targetWidth, targetHeight)
+}
+
+// pgsOverlayPosition 会返回当前 PGS 叠加使用的位置表达式。
+func (r *screenshotRunner) pgsOverlayPosition() string {
+	if r.hasUsablePGSCanvas() {
+		return "0:0"
+	}
+	return "(W-w)/2:(H-h-10)"
+}
+
+// buildPGSOverlayFilterComplex 会构造“先处理视频，再叠加 PGS”的滤镜图。
+func (r *screenshotRunner) buildPGSOverlayFilterComplex(videoChain, overlayTail string) string {
+	steps := []string{
+		buildFilterGraphStep("[0:v:0]", videoChain, "[video]"),
+		buildFilterGraphStep(fmt.Sprintf("[0:s:%d]", r.subtitle.RelativeIndex), r.buildPGSSubtitleScaleChain(), "[sub]"),
+		buildFilterGraphStep("[video][sub]", joinFilters(fmt.Sprintf("overlay=%s", r.pgsOverlayPosition()), overlayTail), "[out]"),
+	}
+	return strings.Join(steps, ";")
+}
+
+// buildPGSRenderFilterComplex 会构造截图主流程使用的 PGS 叠加滤镜图。
+func (r *screenshotRunner) buildPGSRenderFilterComplex() string {
+	return r.buildPGSOverlayFilterComplex(joinFilters(r.colorChain, r.displayAspectFilter()), "")
+}
+
+// buildFilterGraphStep 会为 filter_complex 生成单个具名步骤。
+func buildFilterGraphStep(input, chain, output string) string {
+	filterChain := strings.TrimSpace(chain)
+	if filterChain == "" {
+		filterChain = "null"
+	}
+	return fmt.Sprintf("%s%s%s", input, filterChain, output)
 }
 
 // normalizeRenderProgressWindow 会把渲染窗口时长归一化到更稳定的估算范围。

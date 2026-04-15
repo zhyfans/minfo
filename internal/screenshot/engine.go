@@ -174,13 +174,17 @@ type screenshotRunner struct {
 	dvdMediaInfoResult       dvdMediaInfoResult
 	hasDVDMediaInfoResult    bool
 
-	startOffset float64
-	duration    float64
-	videoWidth  int
-	videoHeight int
-	aspectChain string
-	colorInfo   string
-	colorChain  string
+	startOffset          float64
+	duration             float64
+	videoWidth           int
+	videoHeight          int
+	displayWidth         int
+	displayHeight        int
+	subtitleCanvasWidth  int
+	subtitleCanvasHeight int
+	aspectChain          string
+	colorInfo            string
+	colorChain           string
 
 	activeShotIndex   int
 	activeShotTotal   int
@@ -349,7 +353,19 @@ func (r *screenshotRunner) init(timestamps []string) error {
 
 	r.logProgress("准备", 1, 3, "正在分析画面参数。")
 	r.videoWidth, r.videoHeight = r.detectVideoDimensions()
-	r.aspectChain = r.detectDisplayAspectFilter()
+	r.aspectChain, r.displayWidth, r.displayHeight = r.detectDisplayGeometry()
+	if r.isPGSSubtitle() {
+		r.subtitleCanvasWidth, r.subtitleCanvasHeight = r.detectBitmapSubtitleCanvasDimensions()
+		if r.hasUsablePGSCanvas() {
+			targetWidth, targetHeight := r.bitmapSubtitleTargetSize()
+			r.logf("[信息] PGS 画布尺寸：%dx%d | 目标渲染尺寸：%dx%d | 将先处理视频色彩，再按目标尺寸缩放 PGS 后叠加。",
+				r.subtitleCanvasWidth,
+				r.subtitleCanvasHeight,
+				targetWidth,
+				targetHeight,
+			)
+		}
+	}
 
 	r.logProgress("准备", 2, 3, "正在分析色彩空间。")
 	r.colorInfo = r.detectColorspace()

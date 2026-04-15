@@ -71,6 +71,52 @@ func TestBuildTextSubtitleFilterIncludesFontsDirWhenPrepared(t *testing.T) {
 	}
 }
 
+func TestBuildPGSRenderFilterComplexAppliesVideoProcessingBeforeOverlay(t *testing.T) {
+	runner := &screenshotRunner{
+		colorChain:           "libplacebo=colorspace=gbr",
+		aspectChain:          "setsar=1",
+		displayWidth:         3840,
+		displayHeight:        2160,
+		subtitleCanvasWidth:  1920,
+		subtitleCanvasHeight: 1080,
+		subtitle: subtitleSelection{
+			Mode:          "internal",
+			RelativeIndex: 2,
+			Codec:         "hdmv_pgs_subtitle",
+		},
+	}
+
+	filter := runner.buildPGSRenderFilterComplex()
+	if !strings.Contains(filter, "[0:v:0]libplacebo=colorspace=gbr,setsar=1[video]") {
+		t.Fatalf("expected video processing before overlay, got %q", filter)
+	}
+	if !strings.Contains(filter, "[0:s:2]scale=3840:2160[sub]") {
+		t.Fatalf("expected PGS canvas scaling step, got %q", filter)
+	}
+	if !strings.Contains(filter, "[video][sub]overlay=0:0[out]") {
+		t.Fatalf("expected full-canvas overlay position, got %q", filter)
+	}
+}
+
+func TestBuildPGSRenderFilterComplexFallsBackWhenCanvasUnknown(t *testing.T) {
+	runner := &screenshotRunner{
+		aspectChain: "setsar=1",
+		subtitle: subtitleSelection{
+			Mode:          "internal",
+			RelativeIndex: 1,
+			Codec:         "hdmv_pgs_subtitle",
+		},
+	}
+
+	filter := runner.buildPGSRenderFilterComplex()
+	if !strings.Contains(filter, "[0:s:1]null[sub]") {
+		t.Fatalf("expected subtitle null step when canvas is unknown, got %q", filter)
+	}
+	if !strings.Contains(filter, "overlay=(W-w)/2:(H-h-10)") {
+		t.Fatalf("expected legacy overlay fallback when canvas is unknown, got %q", filter)
+	}
+}
+
 func TestRequiresTextSubtitleFilterForExternalSubtitle(t *testing.T) {
 	runner := &screenshotRunner{
 		subtitle: subtitleSelection{
@@ -360,6 +406,13 @@ func TestBuildDisplayAspectFilterForMetadataSupportsMediaInfoFloatDAR(t *testing
 	filter := buildDisplayAspectFilterForMetadata(720, 480, "", "1.778")
 	if filter != "scale='trunc(ih*16/9/2)*2:ih',setsar=1" {
 		t.Fatalf("filter = %q, want MediaInfo float DAR to normalize to exact 16:9 expansion", filter)
+	}
+}
+
+func TestDetectDisplayDimensionsForMetadataUsesDAR(t *testing.T) {
+	width, height := detectDisplayDimensionsForMetadata(720, 480, "8:9", "16:9")
+	if width != 852 || height != 480 {
+		t.Fatalf("detectDisplayDimensionsForMetadata() = %dx%d, want 852x480", width, height)
 	}
 }
 
