@@ -341,6 +341,35 @@ func (r *screenshotRunner) capturePGSBitmapWithOutputArgs(coarseHMS string, fine
 	return r.runFFmpeg(args, fineSecond)
 }
 
+// captureTextSubtitleWithOutputArgs 会让文字字幕渲染和视频取帧共用同一条时间轴，避免字幕与画面错位。
+func (r *screenshotRunner) captureTextSubtitleWithOutputArgs(aligned float64, outputArgs []string, path string) error {
+	subFilter := r.buildTextSubtitleFilter()
+	if strings.TrimSpace(subFilter) == "" {
+		return fmt.Errorf("text subtitle filter is empty")
+	}
+
+	coarseBack := r.renderCoarseBack()
+	coarseSecond := int(math.Max(math.Floor(aligned)-float64(coarseBack), 0))
+	coarseHMS := formatTimestamp(coarseSecond)
+	filterChain := r.buildTextSubtitleRenderChain(float64(coarseSecond), aligned, subFilter)
+
+	args := []string{
+		"-v", "error",
+		"-fflags", "+genpts",
+		"-ss", coarseHMS,
+		"-probesize", r.settings.ProbeSize,
+		"-analyzeduration", r.settings.Analyze,
+		"-i", r.sourcePath,
+		"-map", "0:v:0",
+		"-y",
+		"-frames:v", "1",
+		"-vf", filterChain,
+	}
+	args = append(args, outputArgs...)
+	args = append(args, path)
+	return r.runFFmpeg(args, aligned-float64(coarseSecond))
+}
+
 // capturePrimary 执行首选截图路径，并根据字幕类型选择对应的渲染方案。
 func (r *screenshotRunner) capturePrimary(aligned float64, path string) error {
 	if r.subtitle.Mode == "external" {
@@ -367,7 +396,7 @@ func (r *screenshotRunner) capturePrimary(aligned float64, path string) error {
 	filterChain := joinFilters(r.colorChain, r.displayAspectFilter())
 
 	if subFilter := r.buildTextSubtitleFilter(); subFilter != "" {
-		filterChain = r.buildTextSubtitleRenderChain(aligned, subFilter)
+		return r.captureTextSubtitleWithOutputArgs(aligned, r.primaryOutputArgs(), path)
 	}
 
 	args := []string{
@@ -415,7 +444,11 @@ func (r *screenshotRunner) capturePNGReencoded(aligned float64, path string) err
 
 	filterChain := joinFilters(r.colorChain, r.displayAspectFilter())
 	if subFilter := r.buildTextSubtitleFilter(); subFilter != "" {
-		filterChain = r.buildTextSubtitleRenderChain(aligned, subFilter)
+		return r.captureTextSubtitleWithOutputArgs(aligned, []string{
+			"-c:v", "png",
+			"-compression_level", "9",
+			"-pred", "mixed",
+		}, path)
 	}
 
 	args := []string{
@@ -499,7 +532,10 @@ func (r *screenshotRunner) captureJPGReencoded(aligned float64, path string) err
 
 	filterChain := joinFilters(r.colorChain, r.displayAspectFilter())
 	if subFilter := r.buildTextSubtitleFilter(); subFilter != "" {
-		filterChain = r.buildTextSubtitleRenderChain(aligned, subFilter)
+		return r.captureTextSubtitleWithOutputArgs(aligned, []string{
+			"-c:v", "mjpeg",
+			"-q:v", strconv.Itoa(quality),
+		}, path)
 	}
 
 	args := []string{
@@ -1107,19 +1143,25 @@ func parseFFmpegSpeed(raw string) (float64, bool) {
 	return value, true
 }
 
-// buildTextSubtitleRenderChain 会按 libass 需要的时间线顺序拼接文字字幕渲染链。
-func (r *screenshotRunner) buildTextSubtitleRenderChain(aligned float64, subFilter string) string {
+// buildTextSubtitleRenderChain 会让文字字幕渲染与视频选帧共享同一条绝对时间轴。
+func (r *screenshotRunner) buildTextSubtitleRenderChain(timelineBase, aligned float64, subFilter string) string {
+	baseTimeline := fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", formatFloat(timelineBase))
+	selectFrame := fmt.Sprintf("select='gte(t,%s)'", formatFloat(aligned))
 	if r.usesLibplaceboColorspace() {
 		return joinFilters(
+			baseTimeline,
+			selectFrame,
 			r.colorChain,
-			fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", formatFloat(aligned)),
 			subFilter,
+			r.displayAspectFilter(),
 		)
 	}
 	return joinFilters(
-		fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", formatFloat(aligned)),
+		baseTimeline,
+		selectFrame,
 		subFilter,
 		r.colorChain,
+		r.displayAspectFilter(),
 	)
 }
 

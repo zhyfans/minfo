@@ -182,29 +182,30 @@ func TestRenderCoarseBackUsesBitmapOverrideWhenPresent(t *testing.T) {
 	}
 }
 
-// TestShellStyleTextSubtitleChain 验证文字字幕过滤器链保持 shell 的 setpts 后接 subtitles 顺序。
-func TestShellStyleTextSubtitleChain(t *testing.T) {
-	filter := joinFilters(
-		"setpts=PTS-STARTPTS+61.000/TB",
-		"subtitles='/media/example/video.mkv':original_size=3840x2160:si=1",
-	)
+func TestBuildTextSubtitleRenderChainUsesTimelineBaseAndSelect(t *testing.T) {
+	runner := &screenshotRunner{
+		aspectChain: "setsar=1",
+	}
 
-	expected := "setpts=PTS-STARTPTS+61.000/TB,subtitles='/media/example/video.mkv':original_size=3840x2160:si=1"
+	filter := runner.buildTextSubtitleRenderChain(60, 61, "subtitles='/media/example/video.mkv':original_size=3840x2160:si=1")
+
+	expected := "setpts=PTS-STARTPTS+60.000/TB,select='gte(t,61.000)',subtitles='/media/example/video.mkv':original_size=3840x2160:si=1,setsar=1"
 	if filter != expected {
-		t.Fatalf("expected shell-style filter chain %q, got %q", expected, filter)
+		t.Fatalf("expected timeline-based text subtitle chain %q, got %q", expected, filter)
 	}
 }
 
 func TestBuildTextSubtitleRenderChainUsesLibplaceboBeforeSubtitles(t *testing.T) {
 	runner := &screenshotRunner{
 		colorChain: "libplacebo=colorspace=gbr",
+		aspectChain: "setsar=1",
 	}
 
-	filter := runner.buildTextSubtitleRenderChain(61, "subtitles='/media/example/video.mkv':original_size=3840x2160:si=1")
+	filter := runner.buildTextSubtitleRenderChain(60, 61, "subtitles='/media/example/video.mkv':original_size=3840x2160:si=1")
 
-	expected := "libplacebo=colorspace=gbr,setpts=PTS-STARTPTS+61.000/TB,subtitles='/media/example/video.mkv':original_size=3840x2160:si=1"
+	expected := "setpts=PTS-STARTPTS+60.000/TB,select='gte(t,61.000)',libplacebo=colorspace=gbr,subtitles='/media/example/video.mkv':original_size=3840x2160:si=1,setsar=1"
 	if filter != expected {
-		t.Fatalf("expected libplacebo-first text subtitle chain %q, got %q", expected, filter)
+		t.Fatalf("expected libplacebo-before-subtitles text subtitle chain %q, got %q", expected, filter)
 	}
 }
 
