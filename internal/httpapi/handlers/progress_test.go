@@ -149,8 +149,8 @@ func TestBuildScreenshotTaskProgressForSubtitleMarker(t *testing.T) {
 	if progress.Detail != "正在用 ffprobe 补充蓝光字幕元数据：playlist 00800。" {
 		t.Fatalf("Detail = %q, want subtitle detail", progress.Detail)
 	}
-	if progress.Percent != 0 {
-		t.Fatalf("Percent = %.2f, want 0 when subtitle prep has no time-based ffmpeg progress", progress.Percent)
+	if progress.Percent != 11 {
+		t.Fatalf("Percent = %.2f, want 11 when subtitle prep enters step 2/3 without fine-grained progress yet", progress.Percent)
 	}
 }
 
@@ -172,11 +172,54 @@ func TestBuildScreenshotTaskProgressForSubtitlePercentMarkerUsesStepProgress(t *
 	if progress.Detail != "正在提取内挂文字字幕。 | frame=12 | speed=1.0x" {
 		t.Fatalf("Detail = %q, want merged subtitle detail", progress.Detail)
 	}
-	if progress.Percent != 15 {
-		t.Fatalf("Percent = %.2f, want 15 when subtitle extraction reaches 50%% of the reserved 30%%", progress.Percent)
+	if progress.Percent != 25 {
+		t.Fatalf("Percent = %.2f, want 25 when step 3/3 reaches 50%% of the reserved 30%%", progress.Percent)
 	}
 	if progress.Indeterminate {
 		t.Fatalf("Indeterminate = true, want false")
+	}
+}
+
+func TestBuildScreenshotTaskProgressForSubtitlePercentMarkerUsesCurrentStepPosition(t *testing.T) {
+	progress := buildScreenshotTaskProgress(screenshot.ModeZip, screenshotJobStatusRunning, 1, []transport.LogEntry{
+		{Message: "[进度] 字幕 1/3: 正在探测内挂字幕轨。"},
+		{Message: "[进度] 字幕 50%: 正在探测内挂字幕轨。 | 已耗时 10s"},
+	})
+
+	if progress == nil {
+		t.Fatal("progress is nil")
+	}
+	if progress.Stage != "准备字幕" {
+		t.Fatalf("Stage = %q, want %q", progress.Stage, "准备字幕")
+	}
+	if progress.Percent != 5 {
+		t.Fatalf("Percent = %.2f, want 5 when step 1/3 reaches 50%% of the reserved 30%%", progress.Percent)
+	}
+	if progress.Indeterminate {
+		t.Fatalf("Indeterminate = true, want false")
+	}
+}
+
+func TestBuildScreenshotTaskProgressForPrepMarkerAfterSubtitle(t *testing.T) {
+	progress := buildScreenshotTaskProgress(screenshot.ModeZip, screenshotJobStatusRunning, 1, []transport.LogEntry{
+		{Message: "[进度] 字幕 100%: 字幕准备完成。"},
+		{Message: "[进度] 准备 2/3: 正在检测 libplacebo / Vulkan 处理能力。"},
+	})
+
+	if progress == nil {
+		t.Fatal("progress is nil")
+	}
+	if progress.Stage != "准备截图" {
+		t.Fatalf("Stage = %q, want %q", progress.Stage, "准备截图")
+	}
+	if progress.Detail != "正在检测 libplacebo / Vulkan 处理能力。" {
+		t.Fatalf("Detail = %q, want prep detail", progress.Detail)
+	}
+	if progress.Percent <= 31 || progress.Percent >= 34 {
+		t.Fatalf("Percent = %.2f, want between 31 and 34 for prep stage after subtitle", progress.Percent)
+	}
+	if !progress.Indeterminate {
+		t.Fatalf("Indeterminate = false, want true")
 	}
 }
 
