@@ -42,6 +42,7 @@ services:
     environment:
       PORT: "28080"
       REQUEST_TIMEOUT: "20m"
+      FFMPEG_SSE_COMPAT: "0"
     volumes:
       - /lib/modules:/lib/modules:ro # 用于挂载 ISO，保持默认
       - /your/media/path1:/media_path1:ro
@@ -66,6 +67,7 @@ docker compose up -d
 
 - `PORT`：Web 服务监听端口，默认 `28080`
 - `REQUEST_TIMEOUT`：单次请求超时时间，默认 `20m`
+- `FFMPEG_SSE_COMPAT`：SSE兼容模式，默认关闭；需要时设为 `1`
 
 ## 许可证
 

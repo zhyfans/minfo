@@ -22,6 +22,9 @@ const (
 // RequestTimeout 保存当前服务处理单个请求时使用的统一超时时间。
 var RequestTimeout = DurationFromEnv("REQUEST_TIMEOUT", DefaultRequestTimeout)
 
+// FFmpegSSECompat 控制是否为 FFmpeg 注入 SSE 兼容环境变量，默认关闭。
+var FFmpegSSECompat = BoolFromEnv("FFMPEG_SSE_COMPAT", false)
+
 // Getenv 返回环境变量 key 的值；当结果为空字符串时返回 fallback。
 func Getenv(key, fallback string) string {
 	value := strings.TrimSpace(os.Getenv(key))
@@ -44,4 +47,20 @@ func DurationFromEnv(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return duration
+}
+
+// BoolFromEnv 解析布尔环境变量；缺失或非法时返回 fallback。
+func BoolFromEnv(key string, fallback bool) bool {
+	value := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
+	switch value {
+	case "":
+		return fallback
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		log.Printf("invalid %s=%q; fallback to %t", key, value, fallback)
+		return fallback
+	}
 }

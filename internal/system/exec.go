@@ -9,8 +9,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+
+	"minfo/internal/config"
 )
 
 const (
@@ -25,6 +29,31 @@ const (
 	UmountBinaryPath    = "/bin/umount"
 	ModprobeBinaryPath  = "/sbin/modprobe"
 )
+
+const ffmpegNativeVectorWidth = "128"
+
+type envOverride struct {
+	key   string
+	value string
+}
+
+var (
+	ffmpegGalliumCPUCapsOnce  sync.Once
+	ffmpegGalliumCPUCapsValue string
+)
+
+type ffmpegSSECompatContextKey struct{}
+
+// FFmpegSSECompatEnabled 会判断当前上下文是否要求对 FFmpeg 注入 SSE 兼容环境变量。
+func FFmpegSSECompatEnabled(ctx context.Context) bool {
+	if ctx == nil {
+		return config.FFmpegSSECompat
+	}
+	if enabled, ok := ctx.Value(ffmpegSSECompatContextKey{}).(bool); ok {
+		return enabled
+	}
+	return config.FFmpegSSECompat
+}
 
 // ResolveBin 会校验固定路径的可执行文件当前可用，并返回该固定路径。
 func ResolveBin(path string) (string, error) {
@@ -61,6 +90,7 @@ func RunCommandInDirLive(ctx context.Context, dir, bin string, onLine OutputLine
 func runCommand(ctx context.Context, dir, bin string, args ...string) (string, string, error) {
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
+	cmd.Env = commandEnv(ctx, bin)
 	setCommandProcessGroup(cmd)
 
 	stdoutFile, err := os.CreateTemp("", "minfo-stdout-*")
@@ -107,6 +137,7 @@ func runCommand(ctx context.Context, dir, bin string, args ...string) (string, s
 func runCommandLive(ctx context.Context, dir, bin string, onLine OutputLineHandler, args ...string) (string, string, error) {
 	cmd := exec.Command(bin, args...)
 	cmd.Dir = dir
+	cmd.Env = commandEnv(ctx, bin)
 	setCommandProcessGroup(cmd)
 
 	var stdoutBuf bytes.Buffer
@@ -152,6 +183,144 @@ func runCommandLive(ctx context.Context, dir, bin string, onLine OutputLineHandl
 	}
 
 	return stdoutBuf.String(), stderrBuf.String(), waitErr
+}
+
+func commandEnv(ctx context.Context, bin string) []string {
+	env := os.Environ()
+	for _, override := range commandEnvOverrides(ctx, bin) {
+		env = withEnvOverride(env, override.key, override.value)
+	}
+	return env
+}
+
+func commandEnvOverrides(ctx context.Context, bin string) []envOverride {
+	if !shouldInjectFFmpegEnv(ctx, bin) {
+		return nil
+	}
+	caps := detectFFmpegGalliumCPUCaps()
+	if caps == "" {
+		return nil
+	}
+	return []envOverride{
+		{key: "LP_NATIVE_VECTOR_WIDTH", value: ffmpegNativeVectorWidth},
+		{key: "GALLIUM_OVERRIDE_CPU_CAPS", value: caps},
+	}
+}
+
+func detectFFmpegGalliumCPUCaps() string {
+	ffmpegGalliumCPUCapsOnce.Do(func() {
+		cpuinfo, err := os.ReadFile("/proc/cpuinfo")
+		if err != nil {
+			ffmpegGalliumCPUCapsValue = defaultFFmpegGalliumCPUCaps(runtime.GOARCH)
+			return
+		}
+		ffmpegGalliumCPUCapsValue = detectFFmpegGalliumCPUCapsFromCPUInfo(runtime.GOARCH, string(cpuinfo))
+	})
+	return ffmpegGalliumCPUCapsValue
+}
+
+func detectFFmpegGalliumCPUCapsFromCPUInfo(goarch, cpuinfo string) string {
+	switch goarch {
+	case "amd64", "386":
+		flags := parseCPUInfoFlags(cpuinfo)
+		switch {
+		case flags["sse4_1"]:
+			return "sse4.1"
+		case flags["ssse3"]:
+			return "ssse3"
+		case flags["sse3"]:
+			return "sse3"
+		case flags["sse2"]:
+			return "sse2"
+		default:
+			return defaultFFmpegGalliumCPUCaps(goarch)
+		}
+	default:
+		return ""
+	}
+}
+
+func defaultFFmpegGalliumCPUCaps(goarch string) string {
+	switch goarch {
+	case "amd64":
+		// amd64 guarantees SSE2, so this remains a safe minimum when cpuinfo is unavailable.
+		return "sse2"
+	default:
+		return ""
+	}
+}
+
+func parseCPUInfoFlags(cpuinfo string) map[string]bool {
+	flags := make(map[string]bool)
+	for _, line := range strings.Split(cpuinfo, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToLower(line), "flags") {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		for _, field := range strings.Fields(strings.ToLower(parts[1])) {
+			flags[field] = true
+		}
+	}
+	return flags
+}
+
+func shouldInjectFFmpegEnv(ctx context.Context, bin string) bool {
+	if !FFmpegSSECompatEnabled(ctx) {
+		return false
+	}
+	trimmed := strings.TrimSpace(bin)
+	if trimmed == "" {
+		return false
+	}
+	base := filepath.Base(trimmed)
+	return trimmed == FFmpegBinaryPath || base == "ffmpeg"
+}
+
+func withEnvOverride(base []string, key, value string) []string {
+	prefix := key + "="
+	merged := make([]string, 0, len(base)+1)
+	for _, entry := range base {
+		if strings.HasPrefix(entry, prefix) {
+			continue
+		}
+		merged = append(merged, entry)
+	}
+	return append(merged, prefix+value)
+}
+
+// FormatCommandForLog 会把命令、参数和当前执行层注入的关键环境变量格式化成便于日志展示的字符串。
+func FormatCommandForLog(ctx context.Context, bin string, args ...string) string {
+	parts := make([]string, 0, len(args)+1+len(commandEnvOverrides(ctx, bin)))
+	for _, override := range commandEnvOverrides(ctx, bin) {
+		parts = append(parts, quoteArg(override.key+"="+override.value))
+	}
+	parts = append(parts, quoteArg(bin))
+	for _, arg := range args {
+		parts = append(parts, quoteArg(arg))
+	}
+	return strings.Join(parts, " ")
+}
+
+// quoteArg 会按 shell 友好的方式转义单个命令参数，便于日志直观展示。
+func quoteArg(value string) string {
+	if value == "" {
+		return "''"
+	}
+	if strings.IndexFunc(value, func(r rune) bool {
+		switch r {
+		case ' ', '\t', '\n', '\r', '\'', '"', '\\', '|', '&', ';', '<', '>', '(', ')', '[', ']', '{', '}', '$':
+			return true
+		default:
+			return false
+		}
+	}) == -1 {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
 type lineRelayWriter struct {

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSubtitleNeedsBluraySupplementSkipsGenericChinese(t *testing.T) {
@@ -199,5 +200,52 @@ func TestInternalTextSubtitleExtractionPlanForSSA(t *testing.T) {
 	}
 	if logMessage == "" {
 		t.Fatal("expected non-empty log message for SSA extraction")
+	}
+}
+
+func TestSubtitleHeartbeatStepPercentApproachesCeiling(t *testing.T) {
+	percent := subtitleHeartbeatStepPercent(10 * time.Second)
+	if percent <= 0 {
+		t.Fatalf("percent = %.1f, want > 0", percent)
+	}
+	if percent >= 94 {
+		t.Fatalf("percent = %.1f, want < 94", percent)
+	}
+}
+
+func TestSubtitleHeartbeatDetailIncludesElapsedTime(t *testing.T) {
+	detail := subtitleHeartbeatDetail("正在探测内挂字幕轨。", 75*time.Second)
+	if !strings.Contains(detail, "正在探测内挂字幕轨。") {
+		t.Fatalf("detail = %q, want original message", detail)
+	}
+	if !strings.Contains(detail, "已耗时 1m15s") {
+		t.Fatalf("detail = %q, want compact elapsed time", detail)
+	}
+}
+
+func TestShouldEmitSubtitleIndexProgressForPGS(t *testing.T) {
+	runner := &screenshotRunner{
+		subtitle: subtitleSelection{
+			Mode:  "internal",
+			Codec: "hdmv_pgs_subtitle",
+		},
+	}
+
+	if !runner.shouldEmitSubtitleIndexProgress() {
+		t.Fatal("expected PGS subtitle indexing to emit progress")
+	}
+}
+
+func TestShouldEmitSubtitleIndexProgressSkipsExtractedText(t *testing.T) {
+	runner := &screenshotRunner{
+		subtitle: subtitleSelection{
+			Mode:          "external",
+			Codec:         "subrip",
+			ExtractedText: true,
+		},
+	}
+
+	if runner.shouldEmitSubtitleIndexProgress() {
+		t.Fatal("expected extracted text subtitle indexing to avoid duplicate progress stage")
 	}
 }

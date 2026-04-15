@@ -22,9 +22,7 @@ func (r *screenshotRunner) resolveUniqueScreenshotSecond(requested, aligned floa
 	}
 
 	if r.subtitle.Mode != "none" {
-		if len(r.subtitleIndex) == 0 {
-			r.subtitleIndex = r.buildSubtitleIndex()
-		}
+		r.ensureSubtitleIndex()
 		for _, candidate := range r.uniqueAlignedCandidatesFromSubtitleIndex(requested) {
 			candidate = r.clampToDuration(candidate)
 			if _, exists := usedSeconds[screenshotSecond(candidate)]; exists {
@@ -39,7 +37,7 @@ func (r *screenshotRunner) resolveUniqueScreenshotSecond(requested, aligned floa
 
 // uniqueAlignedCandidatesFromSubtitleIndex 会根据字幕索引生成可去重的候选截图时间点。
 func (r *screenshotRunner) uniqueAlignedCandidatesFromSubtitleIndex(requested float64) []float64 {
-	if len(r.subtitleIndex) == 0 {
+	if len(r.ensureSubtitleIndex()) == 0 {
 		return nil
 	}
 
@@ -157,6 +155,19 @@ func (r *screenshotRunner) detectColorspace() string {
 	stdout, _, err := system.RunCommand(r.ctx, r.ffprobeBin,
 		"-v", "error",
 		"-select_streams", "v:0",
+		"-show_entries", "stream=color_space,color_primaries,color_transfer:stream_side_data=side_data_type,dv_profile",
+		"-of", "json",
+		r.sourcePath,
+	)
+	if err == nil {
+		if info := parseColorspaceProbeJSON(stdout); info != "" {
+			return info
+		}
+	}
+
+	stdout, _, err = system.RunCommand(r.ctx, r.ffprobeBin,
+		"-v", "error",
+		"-select_streams", "v:0",
 		"-show_entries", "stream=color_space,color_primaries,color_transfer",
 		"-of", "default=noprint_wrappers=1",
 		r.sourcePath,
@@ -183,8 +194,12 @@ func (r *screenshotRunner) detectColorspace() string {
 }
 
 // buildColorspaceChain 返回 ffmpeg 使用的色彩空间转换过滤器链。
-func buildColorspaceChain(info string) string {
+func buildColorspaceChain(info string, preferLibplacebo bool) string {
 	switch {
+	case shouldPreferLibplaceboColorspace(info) && preferLibplacebo:
+		// Follow FFmpeg's documented CPU/llvmpipe example and keep the HDR/DV
+		// libplacebo path conservative by disabling the expensive peak detector.
+		return buildLibplaceboColorspaceChain(info)
 	case strings.Contains(info, "bt2020") && (strings.Contains(info, "smpte2084") || strings.Contains(info, "arib-std-b67")):
 		return "format=yuv420p10le,zscale=t=linear:npl=203,format=gbrpf32le,tonemap=mobius:param=0.3:desat=2.0,zscale=p=bt709:t=bt709:m=bt709,format=rgb24"
 	case strings.Contains(info, "bt2020"):
@@ -192,6 +207,93 @@ func buildColorspaceChain(info string) string {
 	default:
 		return ""
 	}
+}
+
+// shouldPreferLibplaceboColorspace 会判断当前色彩元数据是否更适合走 libplacebo 链路。
+func shouldPreferLibplaceboColorspace(info string) bool {
+	if strings.TrimSpace(info) == "" {
+		return false
+	}
+	if strings.Contains(info, "dolby_vision=1") {
+		return true
+	}
+	return strings.Contains(info, "bt2020") && (strings.Contains(info, "smpte2084") || strings.Contains(info, "arib-std-b67"))
+}
+
+// buildLibplaceboColorspaceChain 会构建 HDR/DV 转换到 sRGB 输出的 libplacebo 过滤器链。
+func buildLibplaceboColorspaceChain(info string) string {
+	// FFmpeg documents RGB output colorspace as gbr (AVCOL_SPC_RGB / sRGB).
+	options := []string{
+		"upscaler=none",
+		"downscaler=none",
+		"colorspace=gbr",
+		"color_primaries=bt709",
+		"color_trc=iec61966-2-1",
+		"range=pc",
+		"format=rgb24",
+	}
+	if strings.Contains(info, "dolby_vision=1") {
+		options = append(options, "apply_dolbyvision=true")
+	}
+	options = append(options, "peak_detect=false")
+	return "libplacebo=" + strings.Join(options, ":")
+}
+
+// parseColorspaceProbeJSON 会解析 ffprobe JSON 输出中的色彩空间和杜比视界元数据。
+func parseColorspaceProbeJSON(stdout string) string {
+	type ffprobeColorSideData struct {
+		SideDataType string `json:"side_data_type"`
+		DVProfile    int    `json:"dv_profile"`
+	}
+	type ffprobeColorStream struct {
+		ColorSpace     string                 `json:"color_space"`
+		ColorPrimaries string                 `json:"color_primaries"`
+		ColorTransfer  string                 `json:"color_transfer"`
+		SideDataList   []ffprobeColorSideData `json:"side_data_list"`
+	}
+	var payload struct {
+		Streams []ffprobeColorStream `json:"streams"`
+	}
+
+	if strings.TrimSpace(stdout) == "" {
+		return ""
+	}
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		return ""
+	}
+	if len(payload.Streams) == 0 {
+		return ""
+	}
+
+	stream := payload.Streams[0]
+	lines := make([]string, 0, 5)
+	if strings.TrimSpace(stream.ColorSpace) != "" {
+		lines = append(lines, "color_space="+strings.TrimSpace(stream.ColorSpace))
+	}
+	if strings.TrimSpace(stream.ColorPrimaries) != "" {
+		lines = append(lines, "color_primaries="+strings.TrimSpace(stream.ColorPrimaries))
+	}
+	if strings.TrimSpace(stream.ColorTransfer) != "" {
+		lines = append(lines, "color_transfer="+strings.TrimSpace(stream.ColorTransfer))
+	}
+	for _, sideData := range stream.SideDataList {
+		lowerType := strings.ToLower(strings.TrimSpace(sideData.SideDataType))
+		if lowerType == "" {
+			continue
+		}
+		if strings.Contains(lowerType, "dovi") || strings.Contains(lowerType, "dolby vision") {
+			lines = append(lines, "dolby_vision=1")
+			if sideData.DVProfile > 0 {
+				lines = append(lines, fmt.Sprintf("dv_profile=%d", sideData.DVProfile))
+			}
+			break
+		}
+	}
+	sort.Strings(lines)
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.Join(lines, "|") + "|"
 }
 
 // buildDisplayAspectFilter 会构建显示参数显示比例过滤器，为后续流程准备好可直接使用的结果。
@@ -255,6 +357,7 @@ func (r *screenshotRunner) detectDisplayAspectFilter() string {
 	return buildDisplayAspectFilterForMetadata(width, height, sar, dar)
 }
 
+// detectDVDDisplayAspectFilterFromMediaInfo 会从 mediainfo 结果中提取 DVD 比例修正所需参数。
 func (r *screenshotRunner) detectDVDDisplayAspectFilterFromMediaInfo(width, height int) (int, int, string, bool) {
 	if r == nil || !r.hasDVDMediaInfoResult {
 		return 0, 0, "", false
@@ -297,6 +400,7 @@ func buildDisplayAspectFilterForMetadata(width, height int, sar, dar string) str
 	return buildDisplayAspectFilter()
 }
 
+// parseAspectRatio 会把类似 16:9 的宽高比文本解析为整数分子分母。
 func parseAspectRatio(raw string) (int, int, bool) {
 	value := strings.TrimSpace(raw)
 	if value == "" || value == "N/A" || value == "0:1" {
@@ -316,6 +420,7 @@ func parseAspectRatio(raw string) (int, int, bool) {
 	return num, den, true
 }
 
+// parseAspectRatioValue 会把宽高比文本解析成浮点值，并兼容 16:9 与 1.778 两种写法。
 func parseAspectRatioValue(raw string) (float64, bool) {
 	if num, den, ok := parseAspectRatio(raw); ok {
 		return float64(num) / float64(den), true
@@ -362,8 +467,31 @@ func (r *screenshotRunner) alignToSubtitle(requested float64) float64 {
 		return requested
 	}
 
+	index := r.ensureSubtitleIndex()
 	if r.subtitle.Mode == "internal" && r.isPGSSubtitle() {
 		return r.alignPGSToSubtitle(requested)
+	}
+
+	if len(index) > 0 {
+		if r.subtitle.Mode == "internal" && r.isSupportedBitmapSubtitle() {
+			if candidate, ok := r.findNearestVisibleBitmapIndexedCandidate(requested); ok {
+				candidate = r.clampToDuration(candidate)
+				if floatDiffGT(candidate, requested) {
+					r.logf("[对齐] 请求 %s → 全片位图索引 %s", secToHMSMS(requested), secToHMSMS(candidate))
+				} else {
+					r.logf("[提示] 已直接复用全片位图索引对齐到原时间点附近：%s", secToHMSMS(candidate))
+				}
+				return candidate
+			}
+		} else if candidate, ok := snapFromIndex(requested, index, subtitleSnapEpsilon); ok {
+			candidate = r.clampToDuration(candidate)
+			if floatDiffGT(candidate, requested) {
+				r.logf("[对齐] 请求 %s → 全片索引 %s", secToHMSMS(requested), secToHMSMS(candidate))
+			} else {
+				r.logf("[提示] 已直接复用全片字幕索引对齐到原时间点附近：%s", secToHMSMS(candidate))
+			}
+			return candidate
+		}
 	}
 
 	if candidate, ok := r.snapWindow(requested); ok {
@@ -401,9 +529,6 @@ func (r *screenshotRunner) alignToSubtitle(requested float64) float64 {
 		}
 	}
 
-	if len(r.subtitleIndex) == 0 {
-		r.subtitleIndex = r.buildSubtitleIndex()
-	}
 	if r.subtitle.Mode == "internal" && r.isSupportedBitmapSubtitle() {
 		if candidate, ok := r.findNearestVisibleBitmapIndexedCandidate(requested); ok {
 			candidate = r.clampToDuration(candidate)
@@ -433,6 +558,13 @@ func (r *screenshotRunner) alignToSubtitle(requested float64) float64 {
 
 // alignPGSToSubtitle 处理 PGS 位图字幕的时间对齐，并结合可见性校验筛掉无效候选。
 func (r *screenshotRunner) alignPGSToSubtitle(requested float64) float64 {
+	if len(r.ensureSubtitleIndex()) > 0 {
+		if candidate, ok := r.findNearestVisibleBitmapIndexedCandidate(requested); ok {
+			r.logf("[对齐] 请求 %s → 全片位图索引 %s", secToHMSMS(requested), secToHMSMS(candidate))
+			return candidate
+		}
+	}
+
 	if candidate, ok := r.snapWindow(requested); ok {
 		if confirmed, ok := r.acceptBitmapSubtitleCandidate("就近/扩窗字幕", candidate); ok {
 			r.logf("[对齐] 请求 %s → 就近/扩窗字幕 %s", secToHMSMS(requested), secToHMSMS(confirmed))
@@ -556,6 +688,22 @@ func (r *screenshotRunner) acceptBitmapSubtitleCandidate(label string, candidate
 		return candidate, true
 	}
 	if !visible {
+		if r != nil && r.subtitle.Mode == "internal" && r.isSupportedBitmapSubtitle() {
+			shortBack := r.renderCoarseBack()
+			longBack := r.settings.CoarseBackPGS
+			if longBack > shortBack {
+				longVisible, longErr := r.internalBitmapSubtitleVisibleAtWithCoarseBack(candidate, longBack)
+				if longErr == nil && longVisible {
+					r.bitmapRenderBackOverride = longBack
+					r.logf("[提示] %s候选仅在较大回溯窗口下渲染出字幕，后续位图截图改用 %ds 回溯窗口：%s",
+						label,
+						longBack,
+						secToHMSMS(candidate),
+					)
+					return candidate, true
+				}
+			}
+		}
 		if r.rejectedBitmapCandidates == nil {
 			r.rejectedBitmapCandidates = make(map[string]struct{})
 		}
@@ -571,7 +719,7 @@ func (r *screenshotRunner) acceptBitmapSubtitleCandidate(label string, candidate
 
 // findNearestVisibleBitmapIndexedCandidate 会查找最近可见位图Indexed候选项，并在多个候选项中返回最合适的结果。
 func (r *screenshotRunner) findNearestVisibleBitmapIndexedCandidate(requested float64) (float64, bool) {
-	if len(r.subtitleIndex) == 0 {
+	if len(r.ensureSubtitleIndex()) == 0 {
 		return 0, false
 	}
 
@@ -603,14 +751,11 @@ func (r *screenshotRunner) buildSubtitleIndex() []subtitleSpan {
 	if r.subtitle.Mode == "none" {
 		return nil
 	}
-	if r.subtitle.Mode == "internal" && r.isPGSSubtitle() {
-		return nil
-	}
 
 	var spans []subtitleSpan
 	var err error
 
-	if r.subtitle.Mode == "internal" && r.isDVDSubtitle() {
+	if r.subtitle.Mode == "internal" && r.isSupportedBitmapSubtitle() {
 		spans, err = r.probeSupportedBitmapSpans(-1, 0)
 	} else if r.subtitle.Mode == "internal" {
 		spans, err = r.probeInternalTextSpans(-1, 0)
@@ -625,14 +770,68 @@ func (r *screenshotRunner) buildSubtitleIndex() []subtitleSpan {
 		return nil
 	}
 
-	if r.subtitle.Mode == "internal" && r.isDVDSubtitle() {
-		spans = mergeNearbySubtitleSpans(spans, 0.75)
-		r.logf("[信息] 已建立字幕索引（DVD 位图字幕，共 %d 段）。", len(spans))
+	if r.subtitle.Mode == "internal" && r.isSupportedBitmapSubtitle() {
+		if r.isDVDSubtitle() {
+			spans = mergeNearbySubtitleSpans(spans, 0.75)
+			r.logf("[信息] 已建立字幕索引（DVD 位图字幕，共 %d 段）。", len(spans))
+			return spans
+		}
+		r.logf("[信息] 已建立字幕索引（PGS 位图字幕，共 %d 段）。", len(spans))
 		return spans
 	}
 
 	r.logf("[信息] 已建立字幕索引（文字字幕）。")
 	return spans
+}
+
+// shouldEmitSubtitleIndexProgress 会判断建立字幕索引时是否需要对外发送心跳进度。
+func (r *screenshotRunner) shouldEmitSubtitleIndexProgress() bool {
+	if r == nil || r.subtitle.Mode == "none" {
+		return false
+	}
+	return !r.subtitle.ExtractedText
+}
+
+// subtitleIndexProgressDetail 会返回当前字幕索引阶段适合展示的进度详情文案。
+func (r *screenshotRunner) subtitleIndexProgressDetail() string {
+	if r == nil {
+		return "正在建立字幕索引。"
+	}
+	switch {
+	case r.subtitle.Mode == "internal" && r.isPGSSubtitle():
+		return "正在建立 PGS 字幕索引。"
+	case r.subtitle.Mode == "internal" && r.isDVDSubtitle():
+		return "正在建立 DVD 字幕索引。"
+	case r.subtitle.Mode == "external":
+		return "正在建立外挂字幕索引。"
+	default:
+		return "正在建立字幕索引。"
+	}
+}
+
+// ensureSubtitleIndex 会按需建立并缓存字幕索引，同时负责索引阶段进度日志。
+func (r *screenshotRunner) ensureSubtitleIndex() []subtitleSpan {
+	if r == nil {
+		return nil
+	}
+	if r.subtitleIndexBuilt {
+		return r.subtitleIndex
+	}
+
+	stopHeartbeat := func() {}
+	if r.shouldEmitSubtitleIndexProgress() {
+		detail := r.subtitleIndexProgressDetail()
+		r.logProgress("字幕", 3, 3, detail)
+		stopHeartbeat = r.startProgressHeartbeat("字幕", detail)
+	}
+
+	r.subtitleIndex = r.buildSubtitleIndex()
+	stopHeartbeat()
+	if r.shouldEmitSubtitleIndexProgress() {
+		r.logProgressPercent("字幕", 100, "字幕准备完成。")
+	}
+	r.subtitleIndexBuilt = true
+	return r.subtitleIndex
 }
 
 // probeSupportedBitmapSpans 根据字幕类型分派到对应的位图字幕区间探测逻辑。

@@ -3,6 +3,7 @@
 package screenshot
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -52,17 +53,130 @@ func TestBuildTextSubtitleFilterForExternalSubtitle(t *testing.T) {
 	}
 }
 
+func TestRequiresTextSubtitleFilterForExternalSubtitle(t *testing.T) {
+	runner := &screenshotRunner{
+		subtitle: subtitleSelection{
+			Mode: "external",
+			File: "/media/example/subtitle.srt",
+		},
+	}
+
+	if !runner.requiresTextSubtitleFilter() {
+		t.Fatal("expected external text subtitle to require text subtitle filter")
+	}
+}
+
+func TestRequiresTextSubtitleFilterForBitmapSubtitle(t *testing.T) {
+	runner := &screenshotRunner{
+		subtitle: subtitleSelection{
+			Mode:  "internal",
+			Codec: "hdmv_pgs_subtitle",
+		},
+	}
+
+	if runner.requiresTextSubtitleFilter() {
+		t.Fatal("expected bitmap subtitle to avoid text subtitle filter")
+	}
+}
+
+func TestRenderCoarseBackUsesDedicatedBitmapWindow(t *testing.T) {
+	runner := &screenshotRunner{
+		settings: variantSettings{
+			CoarseBackPGS:  12,
+			RenderBackPGS:  2,
+			CoarseBackText: 3,
+			RenderBackText: 1,
+		},
+		subtitle: subtitleSelection{
+			Mode:  "internal",
+			Codec: "hdmv_pgs_subtitle",
+		},
+	}
+
+	if got := runner.renderCoarseBack(); got != 2 {
+		t.Fatalf("renderCoarseBack() = %d, want 2 for bitmap subtitle render path", got)
+	}
+}
+
+func TestRenderCoarseBackUsesBitmapOverrideWhenPresent(t *testing.T) {
+	runner := &screenshotRunner{
+		settings: variantSettings{
+			CoarseBackPGS:  12,
+			RenderBackPGS:  2,
+			CoarseBackText: 3,
+			RenderBackText: 1,
+		},
+		subtitle: subtitleSelection{
+			Mode:  "internal",
+			Codec: "hdmv_pgs_subtitle",
+		},
+		bitmapRenderBackOverride: 12,
+	}
+
+	if got := runner.renderCoarseBack(); got != 12 {
+		t.Fatalf("renderCoarseBack() = %d, want 12 after bitmap override", got)
+	}
+}
+
 // TestShellStyleTextSubtitleChain 验证文字字幕过滤器链保持 shell 的 setpts 后接 subtitles 顺序。
 func TestShellStyleTextSubtitleChain(t *testing.T) {
 	filter := joinFilters(
-		"setpts=PTS-STARTPTS,select='gte(t,1.000)'",
 		"setpts=PTS-STARTPTS+61.000/TB",
 		"subtitles='/media/example/video.mkv':original_size=3840x2160:si=1",
 	)
 
-	expected := "setpts=PTS-STARTPTS,select='gte(t,1.000)',setpts=PTS-STARTPTS+61.000/TB,subtitles='/media/example/video.mkv':original_size=3840x2160:si=1"
+	expected := "setpts=PTS-STARTPTS+61.000/TB,subtitles='/media/example/video.mkv':original_size=3840x2160:si=1"
 	if filter != expected {
 		t.Fatalf("expected shell-style filter chain %q, got %q", expected, filter)
+	}
+}
+
+func TestBuildTextSubtitleRenderChainUsesLibplaceboBeforeSubtitles(t *testing.T) {
+	runner := &screenshotRunner{
+		colorChain: "libplacebo=colorspace=gbr",
+	}
+
+	filter := runner.buildTextSubtitleRenderChain(61, "subtitles='/media/example/video.mkv':original_size=3840x2160:si=1")
+
+	expected := "libplacebo=colorspace=gbr,setpts=PTS-STARTPTS+61.000/TB,subtitles='/media/example/video.mkv':original_size=3840x2160:si=1"
+	if filter != expected {
+		t.Fatalf("expected libplacebo-first text subtitle chain %q, got %q", expected, filter)
+	}
+}
+
+func TestIsLibplaceboRenderCrashMessage(t *testing.T) {
+	messages := []string{
+		"LLVM ERROR: Cannot select: ...\nIn function: cs_co_variant.resume",
+		`Assertion failed: !"unlinking orphaned child?" (../src/pl_alloc.c: unlink_child: 115)`,
+		"signal: segmentation fault (core dumped)",
+	}
+
+	for _, message := range messages {
+		if !isLibplaceboRenderCrashMessage(message) {
+			t.Fatalf("expected libplacebo render crash message to be detected for %q", message)
+		}
+	}
+}
+
+func TestApplyLibplaceboRenderFallbackSwitchesToCompatibleChain(t *testing.T) {
+	runner := &screenshotRunner{
+		libplaceboReady: true,
+		colorInfo:       "color_primaries=bt2020|color_space=bt2020nc|color_transfer=smpte2084|",
+		colorChain:      "libplacebo=colorspace=gbr",
+	}
+
+	changed := runner.applyLibplaceboRenderFallback(fmt.Errorf("LLVM ERROR: Cannot select: ..."))
+	if !changed {
+		t.Fatal("expected libplacebo fallback to trigger")
+	}
+	if runner.libplaceboReady {
+		t.Fatal("expected libplaceboReady to be disabled after fallback")
+	}
+	if strings.Contains(runner.colorChain, "libplacebo=") {
+		t.Fatalf("expected fallback colorspace chain to avoid libplacebo, got %q", runner.colorChain)
+	}
+	if !strings.Contains(runner.colorChain, "tonemap=mobius") {
+		t.Fatalf("expected fallback colorspace chain to use tonemap path, got %q", runner.colorChain)
 	}
 }
 
@@ -149,40 +263,64 @@ func TestNormalizeRenderProgressWindow(t *testing.T) {
 
 func TestBuildColorspaceChainForHDR(t *testing.T) {
 	info := "color_primaries=bt2020|color_space=bt2020nc|color_transfer=smpte2084|"
-	chain := buildColorspaceChain(info)
+	chain := buildColorspaceChain(info, true)
 
-	if !strings.Contains(chain, "zscale=t=linear:npl=203") {
-		t.Fatalf("expected HDR colorspace chain to raise nominal peak luminance, got %q", chain)
+	if !strings.Contains(chain, "libplacebo=") {
+		t.Fatalf("expected HDR colorspace chain to use libplacebo, got %q", chain)
 	}
-	if !strings.Contains(chain, "tonemap=mobius") {
-		t.Fatalf("expected HDR colorspace chain to include tone mapping, got %q", chain)
+	if !strings.Contains(chain, "colorspace=gbr") {
+		t.Fatalf("expected HDR colorspace chain to tag RGB output as gbr, got %q", chain)
 	}
-	if !strings.Contains(chain, "tonemap=mobius:param=0.3:desat=2.0,zscale=p=bt709:t=bt709:m=bt709") {
-		t.Fatalf("expected HDR colorspace chain to tonemap before bt709 conversion, got %q", chain)
+	if !strings.Contains(chain, "peak_detect=false") {
+		t.Fatalf("expected HDR colorspace chain to disable peak detection in conservative llvmpipe mode, got %q", chain)
 	}
-	if strings.Contains(chain, "zscale=p=bt709:t=bt709,tonemap=mobius") {
-		t.Fatalf("expected HDR colorspace chain to avoid bt709 conversion before tonemap, got %q", chain)
+	if !strings.Contains(chain, "color_trc=iec61966-2-1") {
+		t.Fatalf("expected HDR colorspace chain to target sRGB transfer, got %q", chain)
+	}
+	if strings.Contains(chain, "colorspace=bt709") {
+		t.Fatalf("did not expect HDR colorspace chain to tag rgb24 output as bt709, got %q", chain)
+	}
+	if strings.Contains(chain, "apply_dolbyvision=true") {
+		t.Fatalf("did not expect non-DV HDR chain to force Dolby Vision processing, got %q", chain)
 	}
 }
 
-func TestBuildColorspaceChainForBT2020SDR(t *testing.T) {
-	info := "color_primaries=bt2020|color_space=bt2020nc|color_transfer=bt709|"
-	chain := buildColorspaceChain(info)
+func TestBuildColorspaceChainForDolbyVision(t *testing.T) {
+	info := "color_primaries=bt2020|color_space=bt2020nc|color_transfer=smpte2084|dolby_vision=1|dv_profile=8|"
+	chain := buildColorspaceChain(info, true)
 
-	if !strings.Contains(chain, "zscale=p=bt709:t=bt709:m=bt709") {
-		t.Fatalf("expected HDR colorspace chain to map to bt709, got %q", chain)
+	if !strings.Contains(chain, "libplacebo=") {
+		t.Fatalf("expected Dolby Vision colorspace chain to use libplacebo, got %q", chain)
 	}
-	if strings.Contains(chain, "scale=in_color_matrix=bt2020:out_color_matrix=bt709") {
-		t.Fatalf("expected BT.2020 SDR colorspace chain to avoid scale matrix-only conversion, got %q", chain)
+	if !strings.Contains(chain, "colorspace=gbr") {
+		t.Fatalf("expected Dolby Vision colorspace chain to tag RGB output as gbr, got %q", chain)
+	}
+	if !strings.Contains(chain, "apply_dolbyvision=true") {
+		t.Fatalf("expected Dolby Vision colorspace chain to apply Dolby Vision metadata, got %q", chain)
+	}
+	if !strings.Contains(chain, "peak_detect=false") {
+		t.Fatalf("expected Dolby Vision colorspace chain to disable peak detection in conservative llvmpipe mode, got %q", chain)
 	}
 }
 
 func TestBuildColorspaceChainForSDR(t *testing.T) {
 	info := "color_primaries=bt709|color_space=bt709|color_transfer=bt709|"
-	chain := buildColorspaceChain(info)
+	chain := buildColorspaceChain(info, true)
 
 	if chain != "" {
 		t.Fatalf("expected SDR colorspace chain to be empty, got %q", chain)
+	}
+}
+
+func TestBuildColorspaceChainFallbackWithoutLibplacebo(t *testing.T) {
+	info := "color_primaries=bt2020|color_space=bt2020nc|color_transfer=smpte2084|"
+	chain := buildColorspaceChain(info, false)
+
+	if !strings.Contains(chain, "tonemap=mobius") {
+		t.Fatalf("expected fallback HDR colorspace chain to use existing zscale/tonemap path, got %q", chain)
+	}
+	if strings.Contains(chain, "libplacebo=") {
+		t.Fatalf("did not expect fallback HDR colorspace chain to use libplacebo, got %q", chain)
 	}
 }
 

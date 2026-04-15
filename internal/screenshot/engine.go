@@ -37,6 +37,8 @@ type variantSettings struct {
 	Analyze        string
 	CoarseBackText int
 	CoarseBackPGS  int
+	RenderBackText int
+	RenderBackPGS  int
 	SearchBack     float64
 	SearchForward  float64
 	JPGQuality     int
@@ -156,6 +158,7 @@ type screenshotRunner struct {
 	oxipngBin        string
 	pngquantBin      string
 	bdsubBin         string
+	libplaceboReady  bool
 	logLines         []string
 	logHandler       LogHandler
 	lossyPNGFiles    map[string]struct{}
@@ -163,7 +166,9 @@ type screenshotRunner struct {
 	blurayContext            blurayProbeContext
 	subtitle                 subtitleSelection
 	subtitleIndex            []subtitleSpan
+	subtitleIndexBuilt       bool
 	rejectedBitmapCandidates map[string]struct{}
+	bitmapRenderBackOverride int
 	tempSubtitleFile         string
 	dvdMediaInfoResult       dvdMediaInfoResult
 	hasDVDMediaInfoResult    bool
@@ -240,9 +245,9 @@ func runScreenshotsFromSource(ctx context.Context, sourcePath, dvdMediaInfoPath,
 		return ScreenshotsResult{Logs: runner.logs()}, err
 	}
 	return ScreenshotsResult{
-		Files:          files,
-		Logs:           runner.logs(),
-		LossyPNGFiles:  runner.lossyPNGFileList(),
+		Files:         files,
+		Logs:          runner.logs(),
+		LossyPNGFiles: runner.lossyPNGFileList(),
 	}, nil
 }
 
@@ -256,6 +261,8 @@ func variantSettingsFor(variant string) variantSettings {
 			Analyze:        "100M",
 			CoarseBackText: 2,
 			CoarseBackPGS:  8,
+			RenderBackText: 1,
+			RenderBackPGS:  2,
 			SearchBack:     4,
 			SearchForward:  8,
 			JPGQuality:     1,
@@ -267,6 +274,8 @@ func variantSettingsFor(variant string) variantSettings {
 			Analyze:        "150M",
 			CoarseBackText: 3,
 			CoarseBackPGS:  12,
+			RenderBackText: 1,
+			RenderBackPGS:  2,
 			SearchBack:     6,
 			SearchForward:  10,
 			JPGQuality:     85,
@@ -332,21 +341,39 @@ func (r *screenshotRunner) init(timestamps []string) error {
 		return err
 	}
 	r.logSelectedSubtitleSummary()
+	if r.subtitle.Mode != "none" {
+		r.ensureSubtitleIndex()
+	}
 
+	r.logProgress("准备", 1, 3, "正在分析画面参数。")
 	r.videoWidth, r.videoHeight = r.detectVideoDimensions()
 	r.aspectChain = r.detectDisplayAspectFilter()
 
+	r.logProgress("准备", 2, 3, "正在分析色彩空间。")
 	r.colorInfo = r.detectColorspace()
-	r.colorChain = buildColorspaceChain(r.colorInfo)
+	if shouldPreferLibplaceboColorspace(r.colorInfo) {
+		r.libplaceboReady = true
+		r.logf("[信息] HDR/Dolby Vision 主截图将优先尝试使用 libplacebo 处理。")
+		if r.requiresTextSubtitleFilter() {
+			r.logf("[信息] 文字字幕场景将优先尝试先执行 libplacebo 色彩映射，再交给 libass 渲染字幕。")
+		}
+	}
+	r.logProgress("准备", 3, 3, "正在准备截图参数。")
+	r.colorChain = buildColorspaceChain(r.colorInfo, r.libplaceboReady)
 	if r.colorInfo != "" {
 		r.logf("[信息] 检测到色彩空间：%s", strings.TrimSuffix(r.colorInfo, "|"))
 		if r.colorChain != "" {
-			r.logf("[信息] HDR/WCG 主截图将统一应用 tone mapping / 色域映射。")
+			if r.libplaceboReady && strings.Contains(r.colorChain, "libplacebo=") {
+				r.logf("[信息] HDR/WCG 主截图将统一应用 libplacebo tone mapping / 色域映射。")
+			} else {
+				r.logf("[信息] HDR/WCG 主截图将统一应用 tone mapping / 色域映射。")
+			}
 		}
 	} else {
 		r.logf("[信息] 无法检测色彩空间，将使用标准转换")
 	}
 
+	r.logProgressPercent("准备", 100, "画面参数准备完成。")
 	r.logf("[信息] 容器起始偏移：%.3fs | 影片总时长：%s", r.startOffset, secToHMS(r.duration))
 	return nil
 }

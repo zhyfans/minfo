@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const progressLogPrefix = "[进度]"
@@ -55,6 +56,7 @@ func EmitProgressPercentLog(onLog LogHandler, stage string, percent float64, det
 	onLog(fmt.Sprintf("%s %s %s%%: %s", progressLogPrefix, strings.TrimSpace(stage), formatProgressPercent(percent), strings.TrimSpace(detail)))
 }
 
+// clampProgressPercent 会把进度百分比限制到 0-100，并统一保留一位小数精度。
 func clampProgressPercent(percent float64) float64 {
 	switch {
 	case percent < 0:
@@ -66,12 +68,49 @@ func clampProgressPercent(percent float64) float64 {
 	}
 }
 
+// formatProgressPercent 会把进度值格式化成更适合日志展示的整数或一位小数字符串。
 func formatProgressPercent(percent float64) string {
 	clamped := clampProgressPercent(percent)
 	if math.Abs(clamped-math.Round(clamped)) < 0.05 {
 		return strconv.Itoa(int(math.Round(clamped)))
 	}
 	return fmt.Sprintf("%.1f", clamped)
+}
+
+// subtitleHeartbeatStepPercent 会根据已耗时长估算字幕耗时步骤的心跳进度。
+func subtitleHeartbeatStepPercent(elapsed time.Duration) float64 {
+	if elapsed <= 0 {
+		return 0
+	}
+
+	seconds := elapsed.Seconds()
+	progress := 94.0 * seconds / (seconds + 8)
+	return clampProgressPercent(progress)
+}
+
+// subtitleHeartbeatDetail 会把基础说明和已耗时信息拼接成心跳进度详情。
+func subtitleHeartbeatDetail(detail string, elapsed time.Duration) string {
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return "正在处理字幕元数据。"
+	}
+	return fmt.Sprintf("%s | 已耗时 %s", detail, formatElapsedCompact(elapsed))
+}
+
+// formatElapsedCompact 会把耗时格式化成适合进度日志的紧凑文本。
+func formatElapsedCompact(elapsed time.Duration) string {
+	if elapsed < 0 {
+		elapsed = 0
+	}
+
+	seconds := int(math.Round(elapsed.Seconds()))
+	if seconds < 1 {
+		seconds = 1
+	}
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	return fmt.Sprintf("%dm%02ds", seconds/60, seconds%60)
 }
 
 // subtitleCodecFromPath 根据字幕文件扩展名推断 ffmpeg 使用的 codec 名称。

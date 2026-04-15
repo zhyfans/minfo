@@ -19,7 +19,9 @@ import (
 // captureScreenshot 会执行一次完整截图，并在文件过大时自动触发重编码兜底。
 func (r *screenshotRunner) captureScreenshot(aligned float64, path string) error {
 	r.activeRenderPhase = "render"
-	if err := r.capturePrimary(aligned, path); err != nil {
+	if err := r.runRenderWithLibplaceboFallback(func() error {
+		return r.capturePrimary(aligned, path)
+	}); err != nil {
 		return err
 	}
 
@@ -41,7 +43,9 @@ func (r *screenshotRunner) captureScreenshot(aligned float64, path string) error
 	r.logf("[提示] %s 大小 %.2fMB，重拍降低质量...", filepath.Base(path), sizeMB)
 	tempPath := path + ".tmp" + r.settings.Ext
 	r.activeRenderPhase = "reencode"
-	if err := r.captureReencoded(aligned, tempPath); err != nil {
+	if err := r.runRenderWithLibplaceboFallback(func() error {
+		return r.captureReencoded(aligned, tempPath)
+	}); err != nil {
 		_ = os.Remove(tempPath)
 		r.logf("[警告] 重拍失败，保留原始截图：%s", err.Error())
 		r.activeRenderPhase = "render"
@@ -55,6 +59,7 @@ func (r *screenshotRunner) captureScreenshot(aligned float64, path string) error
 	return nil
 }
 
+// compressOversizedPNGIfNeeded 会在 PNG 截图过大时依次尝试无损和有损压缩。
 func (r *screenshotRunner) compressOversizedPNGIfNeeded(path string) {
 	info, err := os.Stat(path)
 	if err != nil || info.Size() <= oversizeBytes {
@@ -97,6 +102,7 @@ func (r *screenshotRunner) compressOversizedPNGIfNeeded(path string) {
 	r.logf("[警告] %s 经 oxipng + pngquant 压缩后仍为 %.2fMB，图床上传可能跳过该文件。", filepath.Base(path), finalMB)
 }
 
+// compressOxiPNG 会调用 oxipng 对 PNG 截图执行无损压缩。
 func (r *screenshotRunner) compressOxiPNG(path string) error {
 	if strings.TrimSpace(r.oxipngBin) == "" {
 		return fmt.Errorf("%s not found", system.OxiPNGBinaryPath)
@@ -110,6 +116,7 @@ func (r *screenshotRunner) compressOxiPNG(path string) error {
 	return nil
 }
 
+// compressPNGQuant 会调用 pngquant 生成替换式的有损压缩 PNG。
 func (r *screenshotRunner) compressPNGQuant(path string) error {
 	if strings.TrimSpace(r.pngquantBin) == "" {
 		return fmt.Errorf("%s not found", system.PNGQuantBinaryPath)
@@ -133,6 +140,7 @@ func (r *screenshotRunner) compressPNGQuant(path string) error {
 	return nil
 }
 
+// buildOxiPNGCompressionArgs 会构造 oxipng 压缩当前截图所需的参数列表。
 func buildOxiPNGCompressionArgs(path string) []string {
 	return []string{
 		"-o", "max",
@@ -142,6 +150,7 @@ func buildOxiPNGCompressionArgs(path string) []string {
 	}
 }
 
+// buildPNGQuantCompressionArgs 会构造 pngquant 输出到目标文件的参数列表。
 func buildPNGQuantCompressionArgs(inputPath, outputPath string) []string {
 	return []string{
 		"256",
@@ -154,6 +163,7 @@ func buildPNGQuantCompressionArgs(inputPath, outputPath string) []string {
 	}
 }
 
+// markLossyPNG 会记录当前截图已经经过有损 PNG 压缩。
 func (r *screenshotRunner) markLossyPNG(path string) {
 	if r == nil {
 		return
@@ -168,6 +178,7 @@ func (r *screenshotRunner) markLossyPNG(path string) {
 	r.lossyPNGFiles[name] = struct{}{}
 }
 
+// lossyPNGFileList 会返回按文件名排序的有损 PNG 清单。
 func (r *screenshotRunner) lossyPNGFileList() []string {
 	if r == nil || len(r.lossyPNGFiles) == 0 {
 		return nil
@@ -208,11 +219,16 @@ func (r *screenshotRunner) dvdSubtitleVisibleAt(aligned float64) (bool, error) {
 
 // internalBitmapSubtitleVisibleAt 通过比较有无字幕叠加的探测帧来判断位图字幕是否显示出来。
 func (r *screenshotRunner) internalBitmapSubtitleVisibleAt(aligned float64) (bool, error) {
-	baseFrame, err := r.captureBitmapProbeFrame(r.sourcePath, aligned, false)
+	return r.internalBitmapSubtitleVisibleAtWithCoarseBack(aligned, r.renderCoarseBack())
+}
+
+// internalBitmapSubtitleVisibleAtWithCoarseBack 会使用指定回溯窗口检查位图字幕是否真正显示。
+func (r *screenshotRunner) internalBitmapSubtitleVisibleAtWithCoarseBack(aligned float64, coarseBack int) (bool, error) {
+	baseFrame, err := r.captureBitmapProbeFrame(r.sourcePath, aligned, false, coarseBack)
 	if err != nil {
 		return false, err
 	}
-	subFrame, err := r.captureBitmapProbeFrame(r.sourcePath, aligned, true)
+	subFrame, err := r.captureBitmapProbeFrame(r.sourcePath, aligned, true, coarseBack)
 	if err != nil {
 		return false, err
 	}
@@ -220,8 +236,10 @@ func (r *screenshotRunner) internalBitmapSubtitleVisibleAt(aligned float64) (boo
 }
 
 // captureBitmapProbeFrame 抓取一帧灰度探测图，用于判断位图字幕在该时刻是否可见。
-func (r *screenshotRunner) captureBitmapProbeFrame(inputPath string, localTime float64, withSubtitle bool) (string, error) {
-	coarseBack := r.settings.CoarseBackPGS
+func (r *screenshotRunner) captureBitmapProbeFrame(inputPath string, localTime float64, withSubtitle bool, coarseBack int) (string, error) {
+	if coarseBack <= 0 {
+		coarseBack = r.settings.CoarseBackPGS
+	}
 	coarseSecond := int(math.Max(math.Floor(localTime)-float64(coarseBack), 0))
 	fineSecond := localTime - float64(coarseSecond)
 	coarseHMS := formatTimestamp(coarseSecond)
@@ -307,10 +325,7 @@ func (r *screenshotRunner) capturePrimary(aligned float64, path string) error {
 		}
 	}
 
-	coarseBack := r.settings.CoarseBackText
-	if r.subtitle.Mode == "internal" && r.isSupportedBitmapSubtitle() {
-		coarseBack = r.settings.CoarseBackPGS
-	}
+	coarseBack := r.renderCoarseBack()
 
 	coarseSecond := int(math.Max(math.Floor(aligned)-float64(coarseBack), 0))
 	fineSecond := aligned - float64(coarseSecond)
@@ -325,16 +340,10 @@ func (r *screenshotRunner) capturePrimary(aligned float64, path string) error {
 		}
 	}
 
-	frameSelect := fmt.Sprintf("setpts=PTS-STARTPTS,select='gte(t,%s)'", formatFloat(fineSecond))
-	filterChain := joinFilters(frameSelect, r.colorChain, r.displayAspectFilter())
+	filterChain := joinFilters(r.colorChain, r.displayAspectFilter())
 
 	if subFilter := r.buildTextSubtitleFilter(); subFilter != "" {
-		filterChain = joinFilters(
-			frameSelect,
-			fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", formatFloat(aligned)),
-			subFilter,
-			r.colorChain,
-		)
+		filterChain = r.buildTextSubtitleRenderChain(aligned, subFilter)
 	}
 
 	args := []string{
@@ -344,6 +353,7 @@ func (r *screenshotRunner) capturePrimary(aligned float64, path string) error {
 		"-probesize", r.settings.ProbeSize,
 		"-analyzeduration", r.settings.Analyze,
 		"-i", r.sourcePath,
+		"-ss", formatFloat(fineSecond),
 		"-map", "0:v:0",
 		"-y",
 		"-frames:v", "1",
@@ -364,10 +374,7 @@ func (r *screenshotRunner) captureReencoded(aligned float64, path string) error 
 
 // capturePNGReencoded 用 PNG 重拍截图，并在需要时加入色彩空间转换链。
 func (r *screenshotRunner) capturePNGReencoded(aligned float64, path string) error {
-	coarseBack := r.settings.CoarseBackText
-	if r.subtitle.Mode == "internal" && r.isSupportedBitmapSubtitle() {
-		coarseBack = r.settings.CoarseBackPGS
-	}
+	coarseBack := r.renderCoarseBack()
 
 	coarseSecond := int(math.Max(math.Floor(aligned)-float64(coarseBack), 0))
 	fineSecond := aligned - float64(coarseSecond)
@@ -382,15 +389,9 @@ func (r *screenshotRunner) capturePNGReencoded(aligned float64, path string) err
 		}
 	}
 
-	frameSelect := fmt.Sprintf("setpts=PTS-STARTPTS,select='gte(t,%s)'", formatFloat(fineSecond))
-	filterChain := joinFilters(frameSelect, r.colorChain, r.displayAspectFilter())
+	filterChain := joinFilters(r.colorChain, r.displayAspectFilter())
 	if subFilter := r.buildTextSubtitleFilter(); subFilter != "" {
-		filterChain = joinFilters(
-			frameSelect,
-			fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", formatFloat(aligned)),
-			subFilter,
-			r.colorChain,
-		)
+		filterChain = r.buildTextSubtitleRenderChain(aligned, subFilter)
 	}
 
 	args := []string{
@@ -400,6 +401,7 @@ func (r *screenshotRunner) capturePNGReencoded(aligned float64, path string) err
 		"-probesize", r.settings.ProbeSize,
 		"-analyzeduration", r.settings.Analyze,
 		"-i", r.sourcePath,
+		"-ss", formatFloat(fineSecond),
 		"-map", "0:v:0",
 		"-frames:v", "1",
 		"-y",
@@ -450,10 +452,7 @@ func (r *screenshotRunner) captureInternalBitmapPNGReencoded(coarseHMS string, f
 
 // captureJPGReencoded 用更低质量的 JPG 参数重新截图以控制文件体积。
 func (r *screenshotRunner) captureJPGReencoded(aligned float64, path string) error {
-	coarseBack := r.settings.CoarseBackText
-	if r.subtitle.Mode == "internal" && r.isSupportedBitmapSubtitle() {
-		coarseBack = r.settings.CoarseBackPGS
-	}
+	coarseBack := r.renderCoarseBack()
 
 	coarseSecond := int(math.Max(math.Floor(aligned)-float64(coarseBack), 0))
 	fineSecond := aligned - float64(coarseSecond)
@@ -470,15 +469,9 @@ func (r *screenshotRunner) captureJPGReencoded(aligned float64, path string) err
 		}
 	}
 
-	frameSelect := fmt.Sprintf("setpts=PTS-STARTPTS,select='gte(t,%s)'", formatFloat(fineSecond))
-	filterChain := joinFilters(frameSelect, r.colorChain, r.displayAspectFilter())
+	filterChain := joinFilters(r.colorChain, r.displayAspectFilter())
 	if subFilter := r.buildTextSubtitleFilter(); subFilter != "" {
-		filterChain = joinFilters(
-			frameSelect,
-			fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", formatFloat(aligned)),
-			subFilter,
-			r.colorChain,
-		)
+		filterChain = r.buildTextSubtitleRenderChain(aligned, subFilter)
 	}
 
 	args := []string{
@@ -488,6 +481,7 @@ func (r *screenshotRunner) captureJPGReencoded(aligned float64, path string) err
 		"-probesize", r.settings.ProbeSize,
 		"-analyzeduration", r.settings.Analyze,
 		"-i", r.sourcePath,
+		"-ss", formatFloat(fineSecond),
 		"-map", "0:v:0",
 		"-frames:v", "1",
 		"-y",
@@ -548,15 +542,43 @@ func (r *screenshotRunner) runFFmpeg(args []string, localWindowSeconds float64) 
 	return err
 }
 
+// runRenderWithLibplaceboFallback 会在 libplacebo 渲染崩溃时自动切回兼容链后重试。
+func (r *screenshotRunner) runRenderWithLibplaceboFallback(render func() error) error {
+	if render == nil {
+		return nil
+	}
+
+	err := render()
+	if err == nil {
+		return nil
+	}
+	if !r.applyLibplaceboRenderFallback(err) {
+		return err
+	}
+	return render()
+}
+
 // runFFmpegSubtitleExtract 会执行带实时进度的字幕提取 FFmpeg 命令。
 func (r *screenshotRunner) runFFmpegSubtitleExtract(args []string) (string, string, error) {
 	return r.runFFmpegLive(args, "字幕", 0, r.ffmpegSubtitleProgressDetail)
 }
 
+// runFFmpegLive 会执行带实时进度回调的 FFmpeg 命令，并收集完整输出。
 func (r *screenshotRunner) runFFmpegLive(args []string, stage string, localWindowSeconds float64, detailBuilder func(*ffmpegRealtimeState) string) (string, string, error) {
-	ffmpegArgs := make([]string, 0, len(args)+4)
+	extraArgs := 4
+	if stage == "渲染" && r.usesLibplaceboColorspace() {
+		extraArgs += 4
+	}
+	ffmpegArgs := make([]string, 0, len(args)+extraArgs)
 	ffmpegArgs = append(ffmpegArgs, "-progress", "pipe:1", "-nostats")
+	if stage == "渲染" && r.usesLibplaceboColorspace() {
+		ffmpegArgs = append(ffmpegArgs,
+			"-init_hw_device", "vulkan=minfo:llvmpipe",
+			"-filter_hw_device", "minfo",
+		)
+	}
 	ffmpegArgs = append(ffmpegArgs, args...)
+	r.logf("[ffmpeg][%s] 执行命令: %s", stage, system.FormatCommandForLog(r.ctx, r.ffmpegBin, ffmpegArgs...))
 
 	progress := ffmpegRealtimeState{
 		startedAt:     time.Now(),
@@ -599,6 +621,75 @@ func (r *screenshotRunner) runFFmpegLive(args []string, stage string, localWindo
 	return stdout, stderr, nil
 }
 
+// usesLibplaceboColorspace 会判断当前渲染链是否正在使用 libplacebo。
+func (r *screenshotRunner) usesLibplaceboColorspace() bool {
+	return r != nil && strings.Contains(r.colorChain, "libplacebo=")
+}
+
+// applyLibplaceboRenderFallback 会在识别到崩溃特征时切换到兼容色彩链。
+func (r *screenshotRunner) applyLibplaceboRenderFallback(err error) bool {
+	if r == nil || err == nil || !r.usesLibplaceboColorspace() {
+		return false
+	}
+	if !isLibplaceboRenderCrashMessage(err.Error()) {
+		return false
+	}
+
+	fallbackChain := buildColorspaceChain(r.colorInfo, false)
+	if strings.TrimSpace(fallbackChain) == "" {
+		return false
+	}
+
+	r.libplaceboReady = false
+	r.colorChain = fallbackChain
+	r.logf("[提示] libplacebo/Vulkan 渲染失败，自动回退到兼容色彩链后重试当前截图。")
+	return true
+}
+
+// isLibplaceboRenderCrashMessage 会判断错误文本是否命中已知的 libplacebo 崩溃特征。
+func isLibplaceboRenderCrashMessage(message string) bool {
+	lower := strings.ToLower(strings.TrimSpace(message))
+	if lower == "" {
+		return false
+	}
+	if strings.Contains(lower, "llvm error:") && strings.Contains(lower, "cannot select:") {
+		return true
+	}
+	if strings.Contains(lower, "in function: cs_co_variant.resume") {
+		return true
+	}
+	if strings.Contains(lower, "assertion failed:") && strings.Contains(lower, "pl_alloc.c") {
+		return true
+	}
+	if strings.Contains(lower, "signal: segmentation fault") {
+		return true
+	}
+	if strings.Contains(lower, "segmentation fault (core dumped)") {
+		return true
+	}
+	return false
+}
+
+// renderCoarseBack 会根据字幕类型返回渲染阶段使用的回溯秒数。
+func (r *screenshotRunner) renderCoarseBack() int {
+	if r == nil {
+		return 1
+	}
+	if r.subtitle.Mode == "internal" && r.isSupportedBitmapSubtitle() {
+		if r.bitmapRenderBackOverride > 0 {
+			return r.bitmapRenderBackOverride
+		}
+		if r.settings.RenderBackPGS > 0 {
+			return r.settings.RenderBackPGS
+		}
+		return r.settings.CoarseBackPGS
+	}
+	if r.settings.RenderBackText > 0 {
+		return r.settings.RenderBackText
+	}
+	return r.settings.CoarseBackText
+}
+
 type ffmpegRealtimeState struct {
 	mu                sync.Mutex
 	frame             string
@@ -616,6 +707,7 @@ type ffmpegRealtimeState struct {
 	hasFirstOutTime   bool
 }
 
+// consumeFFmpegProgressLine 会把单行 -progress 输出更新到实时进度状态。
 func (r *screenshotRunner) consumeFFmpegProgressLine(line string, state *ffmpegRealtimeState, stage string, detailBuilder func(*ffmpegRealtimeState) string) {
 	if line == "" {
 		return
@@ -655,6 +747,7 @@ func (r *screenshotRunner) consumeFFmpegProgressLine(line string, state *ffmpegR
 	state.mu.Unlock()
 }
 
+// emitFFmpegRealtimeProgress 会把当前 FFmpeg 实时状态转换成对外进度日志。
 func (r *screenshotRunner) emitFFmpegRealtimeProgress(status string, state *ffmpegRealtimeState, stage string, detailBuilder func(*ffmpegRealtimeState) string) {
 	if status == "" {
 		return
@@ -674,6 +767,7 @@ func (r *screenshotRunner) emitFFmpegRealtimeProgress(status string, state *ffmp
 	state.lastLoggedDetail = detail
 }
 
+// ffmpegProgressPercent 会根据阶段和实时指标估算 FFmpeg 当前完成百分比。
 func (r *screenshotRunner) ffmpegProgressPercent(stage, status string, state *ffmpegRealtimeState) float64 {
 	if status == "end" {
 		return 100
@@ -725,6 +819,7 @@ func (r *screenshotRunner) ffmpegProgressPercent(stage, status string, state *ff
 	return clampProgressPercent(minFloat(float64(percent), 94))
 }
 
+// approximateRenderProgressPercent 会优先根据输出时间或速度估算单帧渲染进度。
 func approximateRenderProgressPercent(state *ffmpegRealtimeState) (float64, bool) {
 	if state == nil || state.windowSeconds <= 0 {
 		if percent, ok := approximateUnknownRenderProgressPercent(state); ok {
@@ -766,6 +861,7 @@ func approximateRenderProgressPercent(state *ffmpegRealtimeState) (float64, bool
 	return clampProgressPercent(minFloat(percent, 94)), true
 }
 
+// approximateUnknownRenderProgressPercent 会在缺少稳定指标时用耗时平滑估算渲染进度。
 func approximateUnknownRenderProgressPercent(state *ffmpegRealtimeState) (float64, bool) {
 	if state == nil || state.startedAt.IsZero() {
 		return 0, false
@@ -789,16 +885,19 @@ func approximateUnknownRenderProgressPercent(state *ffmpegRealtimeState) (float6
 	return clampProgressPercent(percent), true
 }
 
+// ffmpegRenderProgressDetail 会生成截图渲染阶段的实时进度文案。
 func (r *screenshotRunner) ffmpegRenderProgressDetail(state *ffmpegRealtimeState) string {
 	base := r.activeRenderProgressLabel()
 	return base + r.ffmpegProgressMetricsSuffix(state)
 }
 
+// ffmpegSubtitleProgressDetail 会生成字幕提取阶段的实时进度文案。
 func (r *screenshotRunner) ffmpegSubtitleProgressDetail(state *ffmpegRealtimeState) string {
 	base := "正在提取内挂文字字幕。"
 	return base + r.ffmpegProgressMetricsSuffix(state)
 }
 
+// ffmpegProgressMetricsSuffix 会把 frame、fps、speed 等指标拼接成进度详情后缀。
 func (r *screenshotRunner) ffmpegProgressMetricsSuffix(state *ffmpegRealtimeState) string {
 	parts := make([]string, 0, 4)
 	if isUsefulFFmpegFrame(state.frame) {
@@ -819,6 +918,7 @@ func (r *screenshotRunner) ffmpegProgressMetricsSuffix(state *ffmpegRealtimeStat
 	return " | " + strings.Join(parts, " | ")
 }
 
+// activeRenderProgressLabel 会返回当前截图渲染阶段适合展示的说明文本。
 func (r *screenshotRunner) activeRenderProgressLabel() string {
 	if r.activeShotIndex <= 0 || r.activeShotTotal <= 0 || strings.TrimSpace(r.activeShotName) == "" {
 		return "正在渲染截图。"
@@ -837,6 +937,7 @@ func (r *screenshotRunner) displayAspectFilter() string {
 	return buildDisplayAspectFilter()
 }
 
+// normalizeRenderProgressWindow 会把渲染窗口时长归一化到更稳定的估算范围。
 func normalizeRenderProgressWindow(seconds float64) float64 {
 	switch {
 	case seconds <= 0:
@@ -848,6 +949,7 @@ func normalizeRenderProgressWindow(seconds float64) float64 {
 	}
 }
 
+// minFloat 会返回两个浮点数中的较小值。
 func minFloat(left, right float64) float64 {
 	if left < right {
 		return left
@@ -855,6 +957,7 @@ func minFloat(left, right float64) float64 {
 	return right
 }
 
+// maxFloat 会返回两个浮点数中的较大值。
 func maxFloat(left, right float64) float64 {
 	if left > right {
 		return left
@@ -862,6 +965,7 @@ func maxFloat(left, right float64) float64 {
 	return right
 }
 
+// maxInt64 会返回两个 int64 中的较大值。
 func maxInt64(left, right int64) int64 {
 	if left > right {
 		return left
@@ -869,6 +973,7 @@ func maxInt64(left, right int64) int64 {
 	return right
 }
 
+// isUsefulFFmpegFrame 会判断 frame 指标是否可用于进度展示。
 func isUsefulFFmpegFrame(raw string) bool {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -878,6 +983,7 @@ func isUsefulFFmpegFrame(raw string) bool {
 	return err == nil && value > 0
 }
 
+// isUsefulFFmpegFPS 会判断 fps 指标是否可用于进度展示。
 func isUsefulFFmpegFPS(raw string) bool {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" || strings.EqualFold(trimmed, "n/a") {
@@ -887,11 +993,13 @@ func isUsefulFFmpegFPS(raw string) bool {
 	return err == nil && value > 0
 }
 
+// isUsefulFFmpegSpeed 会判断 speed 指标是否可用于进度展示。
 func isUsefulFFmpegSpeed(raw string) bool {
 	speed, ok := parseFFmpegSpeed(raw)
 	return ok && speed > 0
 }
 
+// parseFFmpegSpeed 会把形如 2.3x 的 speed 文本解析成浮点倍速。
 func parseFFmpegSpeed(raw string) (float64, bool) {
 	trimmed := strings.TrimSpace(strings.TrimSuffix(raw, "x"))
 	if trimmed == "" {
@@ -902,6 +1010,22 @@ func parseFFmpegSpeed(raw string) (float64, bool) {
 		return 0, false
 	}
 	return value, true
+}
+
+// buildTextSubtitleRenderChain 会按 libass 需要的时间线顺序拼接文字字幕渲染链。
+func (r *screenshotRunner) buildTextSubtitleRenderChain(aligned float64, subFilter string) string {
+	if r.usesLibplaceboColorspace() {
+		return joinFilters(
+			r.colorChain,
+			fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", formatFloat(aligned)),
+			subFilter,
+		)
+	}
+	return joinFilters(
+		fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", formatFloat(aligned)),
+		subFilter,
+		r.colorChain,
+	)
 }
 
 // buildTextSubtitleFilter 构建 ffmpeg 文本字幕过滤器，适配外挂字幕和内封文字字幕两种场景。
@@ -943,6 +1067,20 @@ func (r *screenshotRunner) isDVDSubtitle() bool {
 // isSupportedBitmapSubtitle 会判断受支持位图字幕是否满足当前条件。
 func (r *screenshotRunner) isSupportedBitmapSubtitle() bool {
 	return r.isPGSSubtitle() || r.isDVDSubtitle()
+}
+
+// requiresTextSubtitleFilter 会判断当前截图场景是否需要走 subtitles 文字滤镜。
+func (r *screenshotRunner) requiresTextSubtitleFilter() bool {
+	if r == nil || r.subtitle.Mode == "none" {
+		return false
+	}
+	if r.subtitle.Mode == "external" {
+		return true
+	}
+	if r.subtitle.Mode == "internal" && !r.isSupportedBitmapSubtitle() {
+		return true
+	}
+	return false
 }
 
 // bitmapSubtitleKindFromCodec 把 codec 名称映射到内部使用的位图字幕类型枚举。

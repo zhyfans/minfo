@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"minfo/internal/system"
 )
@@ -41,6 +42,46 @@ func (r *screenshotRunner) chooseSubtitle() error {
 
 	r.logf("[提示] 未找到可用字幕，将仅截图视频画面。")
 	return nil
+}
+
+// startProgressHeartbeat 会周期性输出阶段心跳进度，并返回停止函数。
+func (r *screenshotRunner) startProgressHeartbeat(stage, detail string) func() {
+	if r == nil || strings.TrimSpace(stage) == "" || strings.TrimSpace(detail) == "" {
+		return func() {}
+	}
+
+	startedAt := time.Now()
+	done := make(chan struct{})
+	var ctxDone <-chan struct{}
+	if r.ctx != nil {
+		ctxDone = r.ctx.Done()
+	}
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctxDone:
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				elapsed := time.Since(startedAt)
+				r.logProgressPercent(stage, subtitleHeartbeatStepPercent(elapsed), subtitleHeartbeatDetail(detail, elapsed))
+			}
+		}
+	}()
+
+	return func() {
+		select {
+		case <-done:
+			return
+		default:
+			close(done)
+		}
+	}
 }
 
 // prepareTextSubtitleRenderSource 会为内挂文字字幕准备更稳定的渲染来源。
@@ -105,6 +146,7 @@ func (r *screenshotRunner) prepareTextSubtitleRenderSource() error {
 	return nil
 }
 
+// shouldExtractInternalTextSubtitle 会判断当前内挂文字字幕是否需要先提取成临时文件。
 func (r *screenshotRunner) shouldExtractInternalTextSubtitle() bool {
 	if r == nil {
 		return false
@@ -118,6 +160,7 @@ func (r *screenshotRunner) shouldExtractInternalTextSubtitle() bool {
 	return true
 }
 
+// internalTextSubtitleExtractionPlan 会根据字幕 codec 返回提取策略和日志文案。
 func internalTextSubtitleExtractionPlan(codec string) (pattern string, extractionCodecArg string, extractedCodec string, logMessage string) {
 	switch strings.ToLower(strings.TrimSpace(codec)) {
 	case "ass":
@@ -450,7 +493,6 @@ func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, erro
 			}
 			if preferPreferredSubtitleRank(rank, bestRank) {
 				best = track
-				best.Language = langForPick
 				best.Title = titleForPick
 				bestLangClass = langClass
 				bestRank = rank
@@ -460,13 +502,11 @@ func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, erro
 
 		if track.IsDefault == 1 && dispositionScore > fallbackScore {
 			fallback = track
-			fallback.Language = langForPick
 			fallback.Title = titleForPick
 			fallbackScore = dispositionScore
 		}
 		if dispositionScore > otherScore {
 			other = track
-			other.Language = langForPick
 			other.Title = titleForPick
 			otherScore = dispositionScore
 		}
