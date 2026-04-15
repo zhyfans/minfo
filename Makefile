@@ -23,7 +23,7 @@ help:
 		'make run            # 运行构建后的二进制' \
 		'make release-check  # 发布前检查：前端构建 + Go 测试 + Go 构建' \
 		'make docker-debug   # Docker 后端 + 本机前端的本地调试后端' \
-		'make docker-build   # 构建与生产更接近的 Docker 镜像'
+		'make docker-build   # 构建 Docker 镜像'
 
 webui-install:
 	./scripts/bootstrap-webui.sh
