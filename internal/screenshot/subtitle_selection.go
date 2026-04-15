@@ -954,6 +954,9 @@ func (r *screenshotRunner) logSelectedSubtitleSummary() {
 		source = "内封"
 		render = "直接使用内封轨道"
 	}
+	if strings.TrimSpace(r.subtitleFontDir) != "" {
+		render += "（优先使用 MKV 附件字体）"
+	}
 
 	r.logf("[字幕格式] 来源：%s | 格式：%s | 渲染：%s", source, subtitleFormatLabel(r.subtitle.Codec), render)
 }

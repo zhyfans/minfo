@@ -170,6 +170,7 @@ type screenshotRunner struct {
 	rejectedBitmapCandidates map[string]struct{}
 	bitmapRenderBackOverride int
 	tempSubtitleFile         string
+	subtitleFontDir          string
 	dvdMediaInfoResult       dvdMediaInfoResult
 	hasDVDMediaInfoResult    bool
 
@@ -226,7 +227,7 @@ func runScreenshotsFromSource(ctx context.Context, sourcePath, dvdMediaInfoPath,
 		logHandler:    onLog,
 		lossyPNGFiles: make(map[string]struct{}),
 	}
-	defer runner.cleanupTemporarySubtitleFile()
+	defer runner.cleanupTemporarySubtitleResources()
 
 	runner.logf("[信息] 已切换为 Go 截图引擎。")
 	if looksLikeDVDSource(runner.dvdProbeSource()) {
@@ -340,6 +341,7 @@ func (r *screenshotRunner) init(timestamps []string) error {
 	if err := r.prepareTextSubtitleRenderSource(); err != nil {
 		return err
 	}
+	r.prepareEmbeddedSubtitleFonts()
 	r.logSelectedSubtitleSummary()
 	if r.subtitle.Mode != "none" {
 		r.ensureSubtitleIndex()
@@ -378,6 +380,12 @@ func (r *screenshotRunner) init(timestamps []string) error {
 	return nil
 }
 
+// cleanupTemporarySubtitleResources 会在截图任务结束时清理提取出的字幕临时资源。
+func (r *screenshotRunner) cleanupTemporarySubtitleResources() {
+	r.cleanupTemporarySubtitleFile()
+	r.cleanupTemporarySubtitleFontDir()
+}
+
 // cleanupTemporarySubtitleFile 会在截图任务结束时清理提取出的临时字幕文件。
 func (r *screenshotRunner) cleanupTemporarySubtitleFile() {
 	if strings.TrimSpace(r.tempSubtitleFile) == "" {
@@ -385,6 +393,15 @@ func (r *screenshotRunner) cleanupTemporarySubtitleFile() {
 	}
 	_ = os.Remove(r.tempSubtitleFile)
 	r.tempSubtitleFile = ""
+}
+
+// cleanupTemporarySubtitleFontDir 会在截图任务结束时清理提取出的附件字体目录。
+func (r *screenshotRunner) cleanupTemporarySubtitleFontDir() {
+	if strings.TrimSpace(r.subtitleFontDir) == "" {
+		return
+	}
+	_ = os.RemoveAll(r.subtitleFontDir)
+	r.subtitleFontDir = ""
 }
 
 // run 会按请求时间点执行整轮截图流程，并汇总成功、失败和最终输出文件。

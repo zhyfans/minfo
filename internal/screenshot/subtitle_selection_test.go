@@ -98,6 +98,45 @@ func TestShouldExtractInternalTextSubtitleSkipsASSLikeCodecs(t *testing.T) {
 	}
 }
 
+func TestShouldUseEmbeddedSubtitleFontsForMatroskaASS(t *testing.T) {
+	runner := &screenshotRunner{
+		sourcePath: "/tmp/demo.mkv",
+		subtitle: subtitleSelection{
+			Mode:  "external",
+			Codec: "ass",
+		},
+	}
+
+	if !runner.shouldUseEmbeddedSubtitleFonts() {
+		t.Fatal("expected MKV ASS subtitle render to prefer embedded fonts")
+	}
+}
+
+func TestShouldUseEmbeddedSubtitleFontsSkipsNonASSAndNonMatroska(t *testing.T) {
+	tests := []screenshotRunner{
+		{
+			sourcePath: "/tmp/demo.mp4",
+			subtitle: subtitleSelection{
+				Mode:  "external",
+				Codec: "ass",
+			},
+		},
+		{
+			sourcePath: "/tmp/demo.mkv",
+			subtitle: subtitleSelection{
+				Mode:  "external",
+				Codec: "subrip",
+			},
+		},
+	}
+
+	for _, runner := range tests {
+		if runner.shouldUseEmbeddedSubtitleFonts() {
+			t.Fatalf("expected %+v to skip embedded MKV font preparation", runner.subtitle)
+		}
+	}
+}
+
 func TestIsSupportedTextSubtitleCodec(t *testing.T) {
 	supported := []string{"ass", "ssa", "subrip", "srt"}
 	for _, codec := range supported {

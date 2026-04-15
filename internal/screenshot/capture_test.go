@@ -53,6 +53,24 @@ func TestBuildTextSubtitleFilterForExternalSubtitle(t *testing.T) {
 	}
 }
 
+func TestBuildTextSubtitleFilterIncludesFontsDirWhenPrepared(t *testing.T) {
+	runner := &screenshotRunner{
+		sourcePath:      "/media/example/video.mkv",
+		videoWidth:      1920,
+		videoHeight:     1080,
+		subtitleFontDir: "/tmp/minfo-sub-fonts-123",
+		subtitle: subtitleSelection{
+			Mode:          "internal",
+			RelativeIndex: 1,
+		},
+	}
+
+	filter := runner.buildTextSubtitleFilter()
+	if !strings.Contains(filter, ":fontsdir='/tmp/minfo-sub-fonts-123'") {
+		t.Fatalf("expected fontsdir in filter, got %q", filter)
+	}
+}
+
 func TestRequiresTextSubtitleFilterForExternalSubtitle(t *testing.T) {
 	runner := &screenshotRunner{
 		subtitle: subtitleSelection{

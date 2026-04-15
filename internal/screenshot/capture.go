@@ -1038,12 +1038,16 @@ func (r *screenshotRunner) buildTextSubtitleFilter() string {
 	if r.videoWidth > 0 && r.videoHeight > 0 {
 		sizePart = fmt.Sprintf(":original_size=%dx%d", r.videoWidth, r.videoHeight)
 	}
+	fontPart := ""
+	if strings.TrimSpace(r.subtitleFontDir) != "" {
+		fontPart = fmt.Sprintf(":fontsdir='%s'", escapeFilterValue(r.subtitleFontDir))
+	}
 
 	switch r.subtitle.Mode {
 	case "external":
-		return fmt.Sprintf("subtitles='%s'%s", escapeFilterValue(r.subtitle.File), sizePart)
+		return fmt.Sprintf("subtitles='%s'%s%s", escapeFilterValue(r.subtitle.File), sizePart, fontPart)
 	case "internal":
-		return fmt.Sprintf("subtitles='%s'%s:si=%d", escapeFilterValue(r.sourcePath), sizePart, r.subtitle.RelativeIndex)
+		return fmt.Sprintf("subtitles='%s'%s%s:si=%d", escapeFilterValue(r.sourcePath), sizePart, fontPart, r.subtitle.RelativeIndex)
 	default:
 		return ""
 	}
