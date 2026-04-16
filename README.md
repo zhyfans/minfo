@@ -17,7 +17,7 @@
 - 支持外挂字幕、内封文字字幕、内封位图字幕
 - 支持 ISO 挂载与 `ISO:/path/to/file.iso!/inner/path` 虚拟路径
 
-## 支持输入
+## 支持媒体
 
 - 普通视频文件
 - 蓝光目录、`BDMV` 目录、`STREAM` 目录
@@ -59,6 +59,7 @@ docker compose up -d
 
 ## 运行要求
 
+- 支持AMD64和ARM64
 - 需要以 `privileged: true` 运行容器，以便挂载 ISO 和处理相关系统能力
 - 若需要挂载 ISO，请保留 `/lib/modules:/lib/modules:ro`
 - 建议将媒体目录只读挂载进容器
