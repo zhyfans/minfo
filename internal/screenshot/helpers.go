@@ -12,9 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-)
 
-const progressLogPrefix = "[进度]"
+	"minfo/internal/taskprogress"
+)
 
 // logs 返回当前截图运行器已经累积的完整日志文本。
 func (r *screenshotRunner) logs() string {
@@ -32,12 +32,12 @@ func (r *screenshotRunner) logf(format string, args ...interface{}) {
 
 // logProgress 会写入一条稳定格式的进度日志，供上层推导阶段型进度。
 func (r *screenshotRunner) logProgress(stage string, current, total int, detail string) {
-	r.logf("%s %s %d/%d: %s", progressLogPrefix, strings.TrimSpace(stage), current, total, strings.TrimSpace(detail))
+	r.logf("%s", taskprogress.FormatStep(stage, current, total, detail))
 }
 
 // logProgressPercent 会写入一条带百分比的进度日志，适合外部工具实时进度。
 func (r *screenshotRunner) logProgressPercent(stage string, percent float64, detail string) {
-	r.logf("%s %s %s%%: %s", progressLogPrefix, strings.TrimSpace(stage), formatProgressPercent(percent), strings.TrimSpace(detail))
+	r.logf("%s", taskprogress.FormatPercent(stage, percent, detail))
 }
 
 // EmitProgressLog 会通过实时日志回调输出一条统一格式的进度日志。
@@ -45,7 +45,7 @@ func EmitProgressLog(onLog LogHandler, stage string, current, total int, detail 
 	if onLog == nil {
 		return
 	}
-	onLog(fmt.Sprintf("%s %s %d/%d: %s", progressLogPrefix, strings.TrimSpace(stage), current, total, strings.TrimSpace(detail)))
+	onLog(taskprogress.FormatStep(stage, current, total, detail))
 }
 
 // EmitProgressPercentLog 会通过实时日志回调输出一条带百分比的进度日志。
@@ -53,7 +53,7 @@ func EmitProgressPercentLog(onLog LogHandler, stage string, percent float64, det
 	if onLog == nil {
 		return
 	}
-	onLog(fmt.Sprintf("%s %s %s%%: %s", progressLogPrefix, strings.TrimSpace(stage), formatProgressPercent(percent), strings.TrimSpace(detail)))
+	onLog(taskprogress.FormatPercent(stage, percent, detail))
 }
 
 // clampProgressPercent 会把进度百分比限制到 0-100，并统一保留一位小数精度。
@@ -66,15 +66,6 @@ func clampProgressPercent(percent float64) float64 {
 	default:
 		return math.Round(percent*10) / 10
 	}
-}
-
-// formatProgressPercent 会把进度值格式化成更适合日志展示的整数或一位小数字符串。
-func formatProgressPercent(percent float64) string {
-	clamped := clampProgressPercent(percent)
-	if math.Abs(clamped-math.Round(clamped)) < 0.05 {
-		return strconv.Itoa(int(math.Round(clamped)))
-	}
-	return fmt.Sprintf("%.1f", clamped)
 }
 
 // subtitleHeartbeatStepPercent 会根据已耗时长估算字幕耗时步骤的心跳进度。

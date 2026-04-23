@@ -10,14 +10,13 @@ import (
 
 	"minfo/internal/httpapi/transport"
 	"minfo/internal/screenshot"
+	"minfo/internal/taskprogress"
 )
 
 var (
 	mediainfoCandidatesPattern   = regexp.MustCompile(`^\[mediainfo\] 候选源数量: (\d+)$`)
 	mediainfoAttemptPattern      = regexp.MustCompile(`^\[mediainfo\] 尝试 (\d+)/(\d+): `)
 	bdinfoScanProgressPattern    = regexp.MustCompile(`^\[bdinfo\]\[(?:stdout|stderr)\] Scanning\s+(\d+)%\s+-\s+(.+)$`)
-	screenshotProgressPattern    = regexp.MustCompile(`^\[进度\] ([^ ]+) (\d+)/(\d+): (.+)$`)
-	screenshotPercentPattern     = regexp.MustCompile(`^\[进度\] ([^ ]+) (\d+(?:\.\d+)?)%: (.+)$`)
 	screenshotUploadStartPattern = regexp.MustCompile(`^开始处理 (\d+) 个文件\.\.\.$`)
 )
 
@@ -279,47 +278,44 @@ func parseScreenshotProgressState(entries []transport.LogEntry) screenshotProgre
 
 	for idx, entry := range entries {
 		line := strings.TrimSpace(entry.Message)
-		if matches := screenshotPercentPattern.FindStringSubmatch(line); len(matches) == 4 {
-			switch strings.TrimSpace(matches[1]) {
-			case "启动":
-				state.bootstrapMarker = updateScreenshotProgressMarkerPercent(state.bootstrapMarker, parseFloat(matches, 2), strings.TrimSpace(matches[3]), idx)
-			case "渲染":
-				state.renderMarker = updateScreenshotProgressMarkerPercent(state.renderMarker, parseFloat(matches, 2), strings.TrimSpace(matches[3]), idx)
-			case "准备":
-				state.prepMarker = updateScreenshotProgressMarkerPercent(state.prepMarker, parseFloat(matches, 2), strings.TrimSpace(matches[3]), idx)
-			case "整理":
-				state.packageMarker = updateScreenshotProgressMarkerPercent(state.packageMarker, parseFloat(matches, 2), strings.TrimSpace(matches[3]), idx)
-			case "字幕":
-				state.subtitleMarker = updateScreenshotProgressMarkerPercent(state.subtitleMarker, parseFloat(matches, 2), strings.TrimSpace(matches[3]), idx)
-			}
-			continue
-		}
-
-		if matches := screenshotProgressPattern.FindStringSubmatch(line); len(matches) == 5 {
-			current := parseInt(matches, 2)
-			total := parseInt(matches, 3)
-			detail := strings.TrimSpace(matches[4])
-			switch strings.TrimSpace(matches[1]) {
-			case "启动":
-				state.bootstrapMarker = updateScreenshotProgressMarkerStep(state.bootstrapMarker, current, total, detail, idx)
-			case "字幕":
-				state.subtitleMarker = updateScreenshotProgressMarkerStep(state.subtitleMarker, current, total, detail, idx)
-			case "准备":
-				state.prepMarker = updateScreenshotProgressMarkerStep(state.prepMarker, current, total, detail, idx)
-			case "截图开始":
-				state.captureStarted = current
-				state.captureTotal = maxInt(state.captureTotal, total)
-				state.captureStartDetail = detail
-				state.captureStartOrder = idx
-				state.renderMarker = nil
-			case "截图完成":
-				state.captureCompleted = current
-				state.captureTotal = maxInt(state.captureTotal, total)
-				state.captureFinishDetail = detail
-				state.captureFinishOrder = idx
-				state.renderMarker = nil
-			case "整理":
-				state.packageMarker = updateScreenshotProgressMarkerStep(state.packageMarker, current, total, detail, idx)
+		if event, ok := taskprogress.ParseLogLine(line); ok {
+			switch event.Kind {
+			case taskprogress.KindPercent:
+				switch event.Stage {
+				case taskprogress.StageBootstrap:
+					state.bootstrapMarker = updateScreenshotProgressMarkerPercent(state.bootstrapMarker, event.Percent, event.Detail, idx)
+				case taskprogress.StageRender:
+					state.renderMarker = updateScreenshotProgressMarkerPercent(state.renderMarker, event.Percent, event.Detail, idx)
+				case taskprogress.StagePrepare:
+					state.prepMarker = updateScreenshotProgressMarkerPercent(state.prepMarker, event.Percent, event.Detail, idx)
+				case taskprogress.StagePackage:
+					state.packageMarker = updateScreenshotProgressMarkerPercent(state.packageMarker, event.Percent, event.Detail, idx)
+				case taskprogress.StageSubtitle:
+					state.subtitleMarker = updateScreenshotProgressMarkerPercent(state.subtitleMarker, event.Percent, event.Detail, idx)
+				}
+			case taskprogress.KindStep:
+				switch event.Stage {
+				case taskprogress.StageBootstrap:
+					state.bootstrapMarker = updateScreenshotProgressMarkerStep(state.bootstrapMarker, event.Current, event.Total, event.Detail, idx)
+				case taskprogress.StageSubtitle:
+					state.subtitleMarker = updateScreenshotProgressMarkerStep(state.subtitleMarker, event.Current, event.Total, event.Detail, idx)
+				case taskprogress.StagePrepare:
+					state.prepMarker = updateScreenshotProgressMarkerStep(state.prepMarker, event.Current, event.Total, event.Detail, idx)
+				case taskprogress.StageCaptureStart:
+					state.captureStarted = event.Current
+					state.captureTotal = maxInt(state.captureTotal, event.Total)
+					state.captureStartDetail = event.Detail
+					state.captureStartOrder = idx
+					state.renderMarker = nil
+				case taskprogress.StageCaptureDone:
+					state.captureCompleted = event.Current
+					state.captureTotal = maxInt(state.captureTotal, event.Total)
+					state.captureFinishDetail = event.Detail
+					state.captureFinishOrder = idx
+					state.renderMarker = nil
+				case taskprogress.StagePackage:
+					state.packageMarker = updateScreenshotProgressMarkerStep(state.packageMarker, event.Current, event.Total, event.Detail, idx)
+				}
 			}
 			continue
 		}
