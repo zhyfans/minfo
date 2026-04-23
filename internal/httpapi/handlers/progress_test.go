@@ -112,6 +112,25 @@ func TestBuildScreenshotTaskProgressForZipRunning(t *testing.T) {
 	}
 }
 
+func TestBuildScreenshotTaskProgressForBootstrapMarker(t *testing.T) {
+	progress := buildScreenshotTaskProgress(screenshot.ModeZip, screenshotJobStatusRunning, 4, []transport.LogEntry{
+		{Message: "[进度] 启动 3/3: 正在估算影片时长并生成随机截图时间点。"},
+	})
+
+	if progress == nil {
+		t.Fatal("progress is nil")
+	}
+	if progress.Stage != "准备任务" {
+		t.Fatalf("Stage = %q, want %q", progress.Stage, "准备任务")
+	}
+	if progress.Detail != "正在估算影片时长并生成随机截图时间点。" {
+		t.Fatalf("Detail = %q, want bootstrap detail", progress.Detail)
+	}
+	if progress.Current != 3 || progress.Total != 3 {
+		t.Fatalf("Current/Total = %d/%d, want 3/3", progress.Current, progress.Total)
+	}
+}
+
 func TestBuildScreenshotTaskProgressForUploadRunning(t *testing.T) {
 	progress := buildScreenshotTaskProgress(screenshot.ModeLinks, screenshotJobStatusRunning, 4, []transport.LogEntry{
 		{Message: "[信息] 容器起始偏移：0.000s | 影片总时长：01:45:20"},
@@ -156,8 +175,8 @@ func TestBuildScreenshotTaskProgressForSubtitleMarker(t *testing.T) {
 
 func TestBuildScreenshotTaskProgressForSubtitlePercentMarkerUsesStepProgress(t *testing.T) {
 	progress := buildScreenshotTaskProgress(screenshot.ModeZip, screenshotJobStatusRunning, 1, []transport.LogEntry{
-		{Message: "[进度] 字幕 3/3: 正在提取内挂文字字幕。"},
-		{Message: "[进度] 字幕 50%: 正在提取内挂文字字幕。 | frame=12 | speed=1.0x"},
+		{Message: "[进度] 字幕 3/3: 正在提取内封文字字幕。"},
+		{Message: "[进度] 字幕 50%: 正在提取内封文字字幕。 | frame=12 | speed=1.0x"},
 	})
 
 	if progress == nil {
@@ -169,7 +188,7 @@ func TestBuildScreenshotTaskProgressForSubtitlePercentMarkerUsesStepProgress(t *
 	if progress.Current != 3 || progress.Total != 3 {
 		t.Fatalf("Current/Total = %d/%d, want 3/3", progress.Current, progress.Total)
 	}
-	if progress.Detail != "正在提取内挂文字字幕。 | frame=12 | speed=1.0x" {
+	if progress.Detail != "正在提取内封文字字幕。 | frame=12 | speed=1.0x" {
 		t.Fatalf("Detail = %q, want merged subtitle detail", progress.Detail)
 	}
 	if progress.Percent != 25 {
@@ -182,8 +201,8 @@ func TestBuildScreenshotTaskProgressForSubtitlePercentMarkerUsesStepProgress(t *
 
 func TestBuildScreenshotTaskProgressForSubtitlePercentMarkerUsesCurrentStepPosition(t *testing.T) {
 	progress := buildScreenshotTaskProgress(screenshot.ModeZip, screenshotJobStatusRunning, 1, []transport.LogEntry{
-		{Message: "[进度] 字幕 1/3: 正在探测内挂字幕轨。"},
-		{Message: "[进度] 字幕 50%: 正在探测内挂字幕轨。 | 已耗时 10s"},
+		{Message: "[进度] 字幕 1/3: 正在探测内封字幕轨。"},
+		{Message: "[进度] 字幕 50%: 正在探测内封字幕轨。 | 已耗时 10s"},
 	})
 
 	if progress == nil {
@@ -197,6 +216,25 @@ func TestBuildScreenshotTaskProgressForSubtitlePercentMarkerUsesCurrentStepPosit
 	}
 	if progress.Indeterminate {
 		t.Fatalf("Indeterminate = true, want false")
+	}
+}
+
+func TestBuildScreenshotTaskProgressForDVDMediaInfoSubtitleMarker(t *testing.T) {
+	progress := buildScreenshotTaskProgress(screenshot.ModeZip, screenshotJobStatusRunning, 1, []transport.LogEntry{
+		{Message: "[进度] 字幕 1/3: 正在读取 DVD MediaInfo 字幕元数据。"},
+	})
+
+	if progress == nil {
+		t.Fatal("progress is nil")
+	}
+	if progress.Stage != "准备字幕" {
+		t.Fatalf("Stage = %q, want %q", progress.Stage, "准备字幕")
+	}
+	if progress.Detail != "正在读取 DVD MediaInfo 字幕元数据。" {
+		t.Fatalf("Detail = %q, want dvd mediainfo detail", progress.Detail)
+	}
+	if !progress.Indeterminate {
+		t.Fatalf("Indeterminate = false, want true")
 	}
 }
 
@@ -225,6 +263,7 @@ func TestBuildScreenshotTaskProgressForPrepMarkerAfterSubtitle(t *testing.T) {
 
 func TestBuildScreenshotTaskProgressForRenderPercentMarker(t *testing.T) {
 	progress := buildScreenshotTaskProgress(screenshot.ModeZip, screenshotJobStatusRunning, 1, []transport.LogEntry{
+		{Message: "[进度] 启动 3/3: 正在估算影片时长并生成随机截图时间点。"},
 		{Message: "[进度] 截图开始 1/1: 正在渲染第 1/1 张截图：00_10_01.png"},
 		{Message: "[进度] 渲染 48%: 正在渲染第 1/1 张截图：00_10_01.png | frame=0 | speed=0.7x"},
 	})
@@ -243,6 +282,29 @@ func TestBuildScreenshotTaskProgressForRenderPercentMarker(t *testing.T) {
 	}
 	if progress.Percent <= 34 || progress.Percent >= 84 {
 		t.Fatalf("Percent = %.2f, want between 34 and 84", progress.Percent)
+	}
+}
+
+func TestBuildScreenshotTaskProgressForAlignmentAndVisibilityMarker(t *testing.T) {
+	progress := buildScreenshotTaskProgress(screenshot.ModeZip, screenshotJobStatusRunning, 4, []transport.LogEntry{
+		{Message: "[进度] 截图开始 1/4: 正在对齐第 1/4 张截图时间点..."},
+		{Message: "[进度] 截图开始 1/4: 正在校验 PGS 字幕是否可见..."},
+	})
+
+	if progress == nil {
+		t.Fatal("progress is nil")
+	}
+	if progress.Stage != "生成截图" {
+		t.Fatalf("Stage = %q, want %q", progress.Stage, "生成截图")
+	}
+	if progress.Detail != "正在校验 PGS 字幕是否可见..." {
+		t.Fatalf("Detail = %q, want latest capture-start detail", progress.Detail)
+	}
+	if progress.Current != 1 || progress.Total != 4 {
+		t.Fatalf("Current/Total = %d/%d, want 1/4", progress.Current, progress.Total)
+	}
+	if !progress.Indeterminate {
+		t.Fatalf("Indeterminate = false, want true")
 	}
 }
 

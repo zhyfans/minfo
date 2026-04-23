@@ -167,16 +167,6 @@ func subtitleHandlingLabel(codec string) string {
 	}
 }
 
-// isASSLikeTextSubtitleCodec 会判断文字字幕 codec 是否为 ASS/SSA 这类需要保留样式的字幕格式。
-func isASSLikeTextSubtitleCodec(codec string) bool {
-	switch strings.ToLower(strings.TrimSpace(codec)) {
-	case "ass", "ssa":
-		return true
-	default:
-		return false
-	}
-}
-
 // isSupportedTextSubtitleCodec 会判断当前文字字幕 codec 是否在服务端允许范围内。
 func isSupportedTextSubtitleCodec(codec string) bool {
 	switch strings.ToLower(strings.TrimSpace(codec)) {
@@ -292,32 +282,6 @@ func secToHMSMS(seconds float64) string {
 	minutes := int(math.Mod(seconds, 3600) / 60)
 	remain := seconds - float64(hours*3600+minutes*60)
 	return fmt.Sprintf("%02d:%02d:%06.3f", hours, minutes, remain)
-}
-
-// snapFromSpans 根据字幕区间把时间点吸附到当前区间或最近的后续区间。
-func snapFromSpans(target float64, spans []subtitleSpan, epsilon float64) (float64, bool) {
-	for _, span := range spans {
-		if target >= span.Start && target <= span.End {
-			return clampInsideSpan(target, span, epsilon), true
-		}
-		if span.Start >= target {
-			return clampInsideSpan(span.Start+epsilon, span, epsilon), true
-		}
-	}
-	return 0, false
-}
-
-// snapFromBitmapSpans 根据位图字幕区间返回适合截图的代表时间点。
-func snapFromBitmapSpans(target float64, spans []subtitleSpan, epsilon float64) (float64, bool) {
-	for _, span := range spans {
-		if target >= span.Start && target <= span.End {
-			return bitmapSnapPoint(span, epsilon), true
-		}
-		if span.Start >= target {
-			return bitmapSnapPoint(span, epsilon), true
-		}
-	}
-	return 0, false
 }
 
 // snapFromIndex 使用预先建立的字幕索引把时间点吸附到最合适的区间。

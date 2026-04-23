@@ -197,7 +197,7 @@ func TestBuildTextSubtitleRenderChainUsesTimelineBaseAndSelect(t *testing.T) {
 
 func TestBuildTextSubtitleRenderChainUsesLibplaceboBeforeSubtitles(t *testing.T) {
 	runner := &screenshotRunner{
-		colorChain: "libplacebo=colorspace=gbr",
+		colorChain:  "libplacebo=colorspace=gbr",
 		aspectChain: "setsar=1",
 	}
 
@@ -306,6 +306,70 @@ func TestFFmpegSubtitleProgressPercentNormalizesFromFirstSubtitleTimestamp(t *te
 	percent := runner.ffmpegProgressPercent("字幕", "continue", state)
 	if percent < 8 || percent > 9 {
 		t.Fatalf("percent = %.2f, want between 8 and 9 after normalizing from first subtitle timestamp", percent)
+	}
+}
+
+// TestFFmpegSubtitleProgressDetailUsesProcessedDuration 验证内封字幕提取进度会展示已处理时长和总时长。
+func TestFFmpegSubtitleProgressDetailUsesProcessedDuration(t *testing.T) {
+	runner := &screenshotRunner{
+		duration: 100,
+	}
+	state := &ffmpegRealtimeState{
+		outTimeMS: 50_000_000,
+	}
+
+	detail := runner.ffmpegSubtitleProgressDetail(state)
+	if detail != "正在提取内封文字字幕。 | 已处理 00:00:50 / 00:01:40" {
+		t.Fatalf("detail = %q, want processed duration detail", detail)
+	}
+}
+
+// TestFFmpegSubtitleProgressDetailNormalizesFromFirstSubtitleTimestamp 验证提取进度展示会与首条字幕时间戳对齐。
+func TestFFmpegSubtitleProgressDetailNormalizesFromFirstSubtitleTimestamp(t *testing.T) {
+	runner := &screenshotRunner{
+		duration: 7200,
+	}
+	state := &ffmpegRealtimeState{
+		outTimeMS:       3_900_000_000,
+		firstOutTimeMS:  3_600_000_000,
+		hasFirstOutTime: true,
+	}
+
+	detail := runner.ffmpegSubtitleProgressDetail(state)
+	if detail != "正在提取内封文字字幕。 | 已处理 00:05:00 / 01:00:00" {
+		t.Fatalf("detail = %q, want normalized processed duration detail", detail)
+	}
+}
+
+// TestLogShotAlignmentProgressUsesCurrentShotIndex 验证截图对齐阶段会输出当前张数提示。
+func TestLogShotAlignmentProgressUsesCurrentShotIndex(t *testing.T) {
+	runner := &screenshotRunner{
+		activeShotIndex: 1,
+		activeShotTotal: 4,
+	}
+
+	runner.logShotAlignmentProgress()
+
+	if got := runner.logs(); got != "[进度] 截图开始 1/4: 正在对齐第 1/4 张截图时间点..." {
+		t.Fatalf("logs = %q, want alignment progress detail", got)
+	}
+}
+
+// TestLogBitmapSubtitleVisibilityProgressUsesBitmapKind 验证位图字幕校验阶段会输出对应字幕类型提示。
+func TestLogBitmapSubtitleVisibilityProgressUsesBitmapKind(t *testing.T) {
+	runner := &screenshotRunner{
+		activeShotIndex: 1,
+		activeShotTotal: 4,
+		subtitle: subtitleSelection{
+			Mode:  "internal",
+			Codec: "hdmv_pgs_subtitle",
+		},
+	}
+
+	runner.logBitmapSubtitleVisibilityProgress()
+
+	if got := runner.logs(); got != "[进度] 截图开始 1/4: 正在校验 PGS 字幕是否可见..." {
+		t.Fatalf("logs = %q, want bitmap visibility progress detail", got)
 	}
 }
 

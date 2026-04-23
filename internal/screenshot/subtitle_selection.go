@@ -1,4 +1,4 @@
-// Package screenshot 实现外挂、内挂和原盘字幕选择流程。
+// Package screenshot 实现外挂、内封和原盘字幕选择流程。
 
 package screenshot
 
@@ -36,12 +36,34 @@ func (r *screenshotRunner) chooseSubtitle() error {
 		return err
 	} else if ok {
 		r.subtitle = selection
-		r.logSubtitleFallback("内挂")
+		r.logSubtitleFallback("内封")
 		return nil
 	}
 
 	r.logf("[提示] 未找到可用字幕，将仅截图视频画面。")
 	return nil
+}
+
+// preloadDVDMediaInfo 会在 DVD 场景下提前读取 mediainfo，并输出对应阶段进度避免前端长时间停在等待状态。
+func (r *screenshotRunner) preloadDVDMediaInfo() {
+	if r == nil || !looksLikeDVDSource(r.dvdProbeSource()) || r.hasDVDMediaInfoResult || strings.TrimSpace(r.mediainfoBin) == "" {
+		return
+	}
+
+	stage := "准备"
+	current := 1
+	total := 3
+	detail := "正在读取 DVD MediaInfo 元数据。"
+	if r.subtitleMode != SubtitleModeOff {
+		stage = "字幕"
+		detail = "正在读取 DVD MediaInfo 字幕元数据。"
+	}
+
+	r.logProgress(stage, current, total, detail)
+	stopHeartbeat := r.startProgressHeartbeat(stage, detail)
+	defer stopHeartbeat()
+
+	_, _, _ = r.ensureDVDMediaInfoResult()
 }
 
 // startProgressHeartbeat 会周期性输出阶段心跳进度，并返回停止函数。
@@ -84,7 +106,7 @@ func (r *screenshotRunner) startProgressHeartbeat(stage, detail string) func() {
 	}
 }
 
-// prepareTextSubtitleRenderSource 会为内挂文字字幕准备更稳定的渲染来源。
+// prepareTextSubtitleRenderSource 会为内封文字字幕准备更稳定的渲染来源。
 func (r *screenshotRunner) prepareTextSubtitleRenderSource() error {
 	if r.subtitle.Mode != "internal" {
 		return nil
@@ -100,7 +122,7 @@ func (r *screenshotRunner) prepareTextSubtitleRenderSource() error {
 	}
 
 	pattern, extractionArgs, extractedCodec, logMessage := internalTextSubtitleExtractionPlan(r.subtitle.Codec)
-	r.logProgress("字幕", 3, 3, "正在提取内挂文字字幕。")
+	r.logProgress("字幕", 3, 3, "正在提取内封文字字幕。")
 	r.logf("%s", logMessage)
 
 	tempFile, err := os.CreateTemp("", pattern)
@@ -142,11 +164,11 @@ func (r *screenshotRunner) prepareTextSubtitleRenderSource() error {
 	r.subtitle.StreamIndex = -1
 	r.subtitle.RelativeIndex = -1
 	r.subtitle.ExtractedText = true
-	r.logf("[信息] 已提取内挂文本字幕供截图使用：%s", tempPath)
+	r.logf("[信息] 已提取内封文本字幕供截图使用：%s", tempPath)
 	return nil
 }
 
-// shouldExtractInternalTextSubtitle 会判断当前内挂文字字幕是否需要先提取成临时文件。
+// shouldExtractInternalTextSubtitle 会判断当前内封文字字幕是否需要先提取成临时文件。
 func (r *screenshotRunner) shouldExtractInternalTextSubtitle() bool {
 	if r == nil {
 		return false
@@ -164,11 +186,11 @@ func (r *screenshotRunner) shouldExtractInternalTextSubtitle() bool {
 func internalTextSubtitleExtractionPlan(codec string) (pattern string, extractionCodecArg string, extractedCodec string, logMessage string) {
 	switch strings.ToLower(strings.TrimSpace(codec)) {
 	case "ass":
-		return "minfo-sub-*.ass", "copy", "ass", "[信息] 内挂 ASS 字幕将提取为原始 ASS 文件，保留样式后参与截图渲染。"
+		return "minfo-sub-*.ass", "copy", "ass", "[信息] 内封 ASS 字幕将提取为原始 ASS 文件，保留样式后参与截图渲染。"
 	case "ssa":
-		return "minfo-sub-*.ssa", "copy", "ssa", "[信息] 内挂 SSA 字幕将提取为原始 SSA 文件，保留样式后参与截图渲染。"
+		return "minfo-sub-*.ssa", "copy", "ssa", "[信息] 内封 SSA 字幕将提取为原始 SSA 文件，保留样式后参与截图渲染。"
 	default:
-		return "minfo-sub-*.srt", "srt", "subrip", "[信息] 内挂文字字幕将先提取为临时字幕文件，再参与截图渲染。"
+		return "minfo-sub-*.srt", "srt", "subrip", "[信息] 内封文字字幕将先提取为临时字幕文件，再参与截图渲染。"
 	}
 }
 
@@ -266,7 +288,7 @@ func (r *screenshotRunner) findExternalSubtitle() (subtitleSelection, bool, erro
 	}, true, nil
 }
 
-// pickInternalSubtitle 会综合语言、默认标记、PID 和原盘补充信息选择最合适的内挂字幕轨。
+// pickInternalSubtitle 会综合语言、默认标记、PID 和原盘补充信息选择最合适的内封字幕轨。
 func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, error) {
 	helperTracks := make([]blurayHelperTrack, 0)
 	helperResult := blurayHelperResult{}
@@ -277,7 +299,9 @@ func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, erro
 	currentPlaylist := r.blurayContext.Playlist
 
 	if looksLikeDVDSource(r.dvdProbeSource()) {
-		r.logProgress("字幕", 1, 3, "正在读取 DVD 字幕元数据。")
+		if !r.hasDVDMediaInfoResult {
+			r.logProgress("字幕", 1, 3, "正在读取 DVD MediaInfo 字幕元数据。")
+		}
 		if result, ok := r.probeDVDMediaInfo(); ok {
 			dvdMediaInfoResult = result
 			dvdMediaInfoTracks = result.Tracks
@@ -289,7 +313,7 @@ func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, erro
 		}
 	}
 
-	r.logProgress("字幕", 1, 3, "正在探测内挂字幕轨。")
+	r.logProgress("字幕", 1, 3, "正在探测内封字幕轨。")
 	rawTracks, err := r.probeSubtitleTracks(r.subtitleProbeSource())
 	if err != nil || len(rawTracks) == 0 {
 		if len(dvdMediaInfoTracks) > 0 {
@@ -550,7 +574,7 @@ func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, erro
 		densitySuffix += fmt.Sprintf("，bitrate=%d", bestRank.Bitrate)
 	}
 
-	r.logf("[信息] 选择内挂字幕：流索引 %d / 字幕序号 %d （语言：%s，title：%s，default=%d，forced=%d，字幕格式：%s，codec：%s%s）",
+	r.logf("[信息] 选择内封字幕：流索引 %d / 字幕序号 %d （语言：%s，title：%s，default=%d，forced=%d，字幕格式：%s，codec：%s%s）",
 		best.Index,
 		relativeIndex,
 		bestLangClass,
@@ -707,7 +731,7 @@ func (r *screenshotRunner) probeDVDMediaInfo() (dvdMediaInfoResult, bool) {
 	return result, true
 }
 
-// logInternalSubtitleTracks 会把当前可见的内挂字幕轨和补充元数据按统一格式写入日志。
+// logInternalSubtitleTracks 会把当前可见的内封字幕轨和补充元数据按统一格式写入日志。
 func (r *screenshotRunner) logInternalSubtitleTracks(raw []subtitleTrack, helper []blurayHelperTrack, helperResult blurayHelperResult, bluray []subtitleTrack, blurayMode string, dvdMediaInfo []dvdMediaInfoTrack, dvdMediaInfoResult dvdMediaInfoResult) {
 	if len(raw) == 0 {
 		return
@@ -719,7 +743,7 @@ func (r *screenshotRunner) logInternalSubtitleTracks(raw []subtitleTrack, helper
 	}
 	dvdTrackByStreamID := resolveDVDMediaInfoTracks(raw, dvdMediaInfo)
 
-	r.logf("[信息] 可用内挂字幕轨（共 %d 条）：", len(raw))
+	r.logf("[信息] 可用内封字幕轨（共 %d 条）：", len(raw))
 	for index, track := range raw {
 		langForPick := track.Language
 		titleForPick := track.Title
@@ -949,7 +973,7 @@ func (r *screenshotRunner) logSelectedSubtitleSummary() {
 	render := "直接使用外挂文件"
 	if r.subtitle.ExtractedText {
 		source = "内封"
-		render = "提取内挂文字字幕后按外挂文件渲染"
+		render = "提取内封文字字幕后按外挂文件渲染"
 	} else if r.subtitle.Mode == "internal" {
 		source = "内封"
 		render = "直接使用内封轨道"

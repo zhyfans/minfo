@@ -296,7 +296,7 @@ func (r *screenshotRunner) captureDVDPrimary(coarseHMS string, fineSecond float6
 	return r.captureInternalBitmapPrimary(coarseHMS, fineSecond, path)
 }
 
-// captureInternalBitmapPrimary 使用 overlay 叠加字幕轨，渲染内挂位图字幕的主流程截图。
+// captureInternalBitmapPrimary 使用 overlay 叠加字幕轨，渲染内封位图字幕的主流程截图。
 func (r *screenshotRunner) captureInternalBitmapPrimary(coarseHMS string, fineSecond float64, path string) error {
 	filterComplex := joinFilters(
 		fmt.Sprintf("[0:v:0][0:s:%d]overlay=(W-w)/2:(H-h-10)", r.subtitle.RelativeIndex),
@@ -485,7 +485,7 @@ func (r *screenshotRunner) captureDVDPNGReencoded(coarseHMS string, fineSecond f
 	return r.captureInternalBitmapPNGReencoded(coarseHMS, fineSecond, path)
 }
 
-// captureInternalBitmapPNGReencoded 用 PNG 重新渲染带内挂位图字幕的截图。
+// captureInternalBitmapPNGReencoded 用 PNG 重新渲染带内封位图字幕的截图。
 func (r *screenshotRunner) captureInternalBitmapPNGReencoded(coarseHMS string, fineSecond float64, path string) error {
 	filterComplex := joinFilters(
 		fmt.Sprintf("[0:v:0][0:s:%d]overlay=(W-w)/2:(H-h-10)", r.subtitle.RelativeIndex),
@@ -570,7 +570,7 @@ func (r *screenshotRunner) captureDVDJPGReencoded(coarseHMS string, fineSecond f
 	return r.captureInternalBitmapJPGReencoded(coarseHMS, fineSecond, quality, path)
 }
 
-// captureInternalBitmapJPGReencoded 用 JPG 重新渲染带内挂位图字幕的截图。
+// captureInternalBitmapJPGReencoded 用 JPG 重新渲染带内封位图字幕的截图。
 func (r *screenshotRunner) captureInternalBitmapJPGReencoded(coarseHMS string, fineSecond float64, quality int, path string) error {
 	filterComplex := joinFilters(
 		fmt.Sprintf("[0:v:0][0:s:%d]overlay=(W-w)/2:(H-h-10)", r.subtitle.RelativeIndex),
@@ -840,19 +840,9 @@ func (r *screenshotRunner) ffmpegProgressPercent(stage, status string, state *ff
 		return 100
 	}
 
-	if stage == "字幕" && r.duration > 0 && state.outTimeMS > 0 {
-		totalUS := int64(r.duration * 1_000_000)
-		if totalUS > 0 {
-			processedUS := state.outTimeMS
-			rangeUS := totalUS
-			if state.hasFirstOutTime && state.firstOutTimeMS > 0 && state.firstOutTimeMS < totalUS {
-				processedUS = maxInt64(state.outTimeMS-state.firstOutTimeMS, 0)
-				rangeUS = totalUS - state.firstOutTimeMS
-			}
-			if rangeUS <= 0 {
-				rangeUS = totalUS
-			}
-			percent := float64(processedUS) / float64(rangeUS) * 100
+	if stage == "字幕" {
+		if processedSeconds, totalSeconds, ok := r.ffmpegSubtitleProcessedWindow(state); ok && totalSeconds > 0 {
+			percent := processedSeconds / totalSeconds * 100
 			if percent < 0.1 {
 				percent = 0.1
 			}
@@ -960,8 +950,37 @@ func (r *screenshotRunner) ffmpegRenderProgressDetail(state *ffmpegRealtimeState
 
 // ffmpegSubtitleProgressDetail 会生成字幕提取阶段的实时进度文案。
 func (r *screenshotRunner) ffmpegSubtitleProgressDetail(state *ffmpegRealtimeState) string {
-	base := "正在提取内挂文字字幕。"
+	base := "正在提取内封文字字幕。"
+	if processedSeconds, totalSeconds, ok := r.ffmpegSubtitleProcessedWindow(state); ok {
+		return fmt.Sprintf("%s | 已处理 %s / %s", base, secToHMS(processedSeconds), secToHMS(totalSeconds))
+	}
 	return base + r.ffmpegProgressMetricsSuffix(state)
+}
+
+// ffmpegSubtitleProcessedWindow 会把字幕提取实时状态换算成适合展示的已处理时长和总时长。
+func (r *screenshotRunner) ffmpegSubtitleProcessedWindow(state *ffmpegRealtimeState) (float64, float64, bool) {
+	if r == nil || state == nil || r.duration <= 0 || state.outTimeMS <= 0 {
+		return 0, 0, false
+	}
+
+	totalSeconds := r.duration
+	processedSeconds := float64(state.outTimeMS) / 1_000_000.0
+	firstSeconds := float64(state.firstOutTimeMS) / 1_000_000.0
+
+	if state.hasFirstOutTime && state.firstOutTimeMS > 0 && firstSeconds < totalSeconds {
+		processedSeconds = float64(maxInt64(state.outTimeMS-state.firstOutTimeMS, 0)) / 1_000_000.0
+		totalSeconds -= firstSeconds
+	}
+	if totalSeconds <= 0 {
+		totalSeconds = r.duration
+	}
+	if processedSeconds < 0 {
+		processedSeconds = 0
+	}
+	if processedSeconds > totalSeconds {
+		processedSeconds = totalSeconds
+	}
+	return processedSeconds, totalSeconds, totalSeconds > 0
 }
 
 // ffmpegProgressMetricsSuffix 会把 frame、fps、speed 等指标拼接成进度详情后缀。
@@ -994,6 +1013,31 @@ func (r *screenshotRunner) activeRenderProgressLabel() string {
 		return fmt.Sprintf("正在重拍第 %d/%d 张截图：%s", r.activeShotIndex, r.activeShotTotal, r.activeShotName)
 	}
 	return fmt.Sprintf("正在渲染第 %d/%d 张截图：%s", r.activeShotIndex, r.activeShotTotal, r.activeShotName)
+}
+
+// logShotAlignmentProgress 会记录当前截图进入字幕对齐阶段的进度文案。
+func (r *screenshotRunner) logShotAlignmentProgress() {
+	if r == nil || r.activeShotIndex <= 0 || r.activeShotTotal <= 0 {
+		return
+	}
+	r.logProgress("截图开始", r.activeShotIndex, r.activeShotTotal,
+		fmt.Sprintf("正在对齐第 %d/%d 张截图时间点...", r.activeShotIndex, r.activeShotTotal))
+}
+
+// logBitmapSubtitleVisibilityProgress 会记录当前截图进入位图字幕可见性校验阶段的进度文案。
+func (r *screenshotRunner) logBitmapSubtitleVisibilityProgress() {
+	if r == nil || r.activeShotIndex <= 0 || r.activeShotTotal <= 0 {
+		return
+	}
+	label := "PGS/DVD"
+	switch {
+	case r.isPGSSubtitle():
+		label = "PGS"
+	case r.isDVDSubtitle():
+		label = "DVD"
+	}
+	r.logProgress("截图开始", r.activeShotIndex, r.activeShotTotal,
+		fmt.Sprintf("正在校验 %s 字幕是否可见...", label))
 }
 
 // displayAspectFilter 返回当前截图任务应使用的显示宽高比修正过滤器链。

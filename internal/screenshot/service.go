@@ -71,6 +71,46 @@ type UploadResult struct {
 // LogHandler 处理截图流程产生的单行实时日志。
 type LogHandler func(line string)
 
+// startStandaloneProgressHeartbeat 会通过外部日志回调周期性输出进度心跳，并返回停止函数。
+func startStandaloneProgressHeartbeat(ctx context.Context, onLog LogHandler, stage, detail string) func() {
+	if onLog == nil || strings.TrimSpace(stage) == "" || strings.TrimSpace(detail) == "" {
+		return func() {}
+	}
+
+	startedAt := time.Now()
+	done := make(chan struct{})
+	var ctxDone <-chan struct{}
+	if ctx != nil {
+		ctxDone = ctx.Done()
+	}
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctxDone:
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				elapsed := time.Since(startedAt)
+				EmitProgressPercentLog(onLog, stage, subtitleHeartbeatStepPercent(elapsed), subtitleHeartbeatDetail(detail, elapsed))
+			}
+		}
+	}()
+
+	return func() {
+		select {
+		case <-done:
+			return
+		default:
+			close(done)
+		}
+	}
+}
+
 // NormalizeMode 规范化截图接口的 mode；未知值会回落为 zip。
 func NormalizeMode(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {

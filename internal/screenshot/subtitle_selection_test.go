@@ -253,12 +253,27 @@ func TestSubtitleHeartbeatStepPercentApproachesCeiling(t *testing.T) {
 }
 
 func TestSubtitleHeartbeatDetailIncludesElapsedTime(t *testing.T) {
-	detail := subtitleHeartbeatDetail("正在探测内挂字幕轨。", 75*time.Second)
-	if !strings.Contains(detail, "正在探测内挂字幕轨。") {
+	detail := subtitleHeartbeatDetail("正在探测内封字幕轨。", 75*time.Second)
+	if !strings.Contains(detail, "正在探测内封字幕轨。") {
 		t.Fatalf("detail = %q, want original message", detail)
 	}
 	if !strings.Contains(detail, "已耗时 1m15s") {
 		t.Fatalf("detail = %q, want compact elapsed time", detail)
+	}
+}
+
+func TestPreloadDVDMediaInfoLogsProgressBeforeProbe(t *testing.T) {
+	runner := &screenshotRunner{
+		ctx:          nil,
+		sourcePath:   "/tmp/VIDEO_TS/VTS_01_1.VOB",
+		subtitleMode: SubtitleModeAuto,
+		mediainfoBin: "__missing_mediainfo__",
+	}
+
+	runner.preloadDVDMediaInfo()
+
+	if !strings.Contains(runner.logs(), "[进度] 字幕 1/3: 正在读取 DVD MediaInfo 字幕元数据。") {
+		t.Fatalf("logs = %q, want dvd mediainfo subtitle progress", runner.logs())
 	}
 }
 

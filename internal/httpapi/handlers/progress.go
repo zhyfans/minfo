@@ -32,6 +32,7 @@ type screenshotProgressMarker struct {
 }
 
 type screenshotProgressState struct {
+	bootstrapMarker     *screenshotProgressMarker
 	subtitleMarker      *screenshotProgressMarker
 	prepMarker          *screenshotProgressMarker
 	packageMarker       *screenshotProgressMarker
@@ -280,6 +281,8 @@ func parseScreenshotProgressState(entries []transport.LogEntry) screenshotProgre
 		line := strings.TrimSpace(entry.Message)
 		if matches := screenshotPercentPattern.FindStringSubmatch(line); len(matches) == 4 {
 			switch strings.TrimSpace(matches[1]) {
+			case "启动":
+				state.bootstrapMarker = updateScreenshotProgressMarkerPercent(state.bootstrapMarker, parseFloat(matches, 2), strings.TrimSpace(matches[3]), idx)
 			case "渲染":
 				state.renderMarker = updateScreenshotProgressMarkerPercent(state.renderMarker, parseFloat(matches, 2), strings.TrimSpace(matches[3]), idx)
 			case "准备":
@@ -297,6 +300,8 @@ func parseScreenshotProgressState(entries []transport.LogEntry) screenshotProgre
 			total := parseInt(matches, 3)
 			detail := strings.TrimSpace(matches[4])
 			switch strings.TrimSpace(matches[1]) {
+			case "启动":
+				state.bootstrapMarker = updateScreenshotProgressMarkerStep(state.bootstrapMarker, current, total, detail, idx)
 			case "字幕":
 				state.subtitleMarker = updateScreenshotProgressMarkerStep(state.subtitleMarker, current, total, detail, idx)
 			case "准备":
@@ -336,10 +341,11 @@ func parseScreenshotProgressState(entries []transport.LogEntry) screenshotProgre
 // estimateZipProgressFromMarkers 会优先根据截图阶段标记估算压缩包模式进度。
 func estimateZipProgressFromMarkers(requestedCount int, state screenshotProgressState) *transport.TaskProgress {
 	hasSubtitle := state.subtitleMarker != nil
+	bootstrapFloor := bootstrapProgressPercent(state.bootstrapMarker)
 	if state.packageMarker != nil {
 		total := maxInt(state.packageMarker.total, 1)
 		effective := markerStepProgress(state.packageMarker, 0.15)
-		percent := zipPackageBase(hasSubtitle) + scaledProgressFloat(effective, total, zipPackageWidth())
+		percent := maxFloat(zipPackageBase(hasSubtitle)+scaledProgressFloat(effective, total, zipPackageWidth()), bootstrapFloor)
 		return progressSnapshot(percent, "整理结果", state.packageMarker.detail, state.packageMarker.current, total, true)
 	}
 
@@ -363,19 +369,24 @@ func estimateZipProgressFromMarkers(requestedCount int, state screenshotProgress
 			detail = "截图已生成，正在整理结果。"
 			current = total
 		}
-		percent := zipRenderBase(hasSubtitle) + scaledProgressFloat(effective, total, zipRenderWidth(hasSubtitle))
+		percent := maxFloat(zipRenderBase(hasSubtitle)+scaledProgressFloat(effective, total, zipRenderWidth(hasSubtitle)), bootstrapFloor)
 		return progressSnapshot(percent, "生成截图", detail, current, total, indeterminate)
 	}
 
 	if state.prepMarker != nil {
 		total := maxInt(state.prepMarker.total, 1)
 		effective := markerStageProgress(state.prepMarker, 0.1)
-		percent := zipPrepBase(hasSubtitle) + scaledProgressFloat(effective, total, zipPrepWidth(hasSubtitle))
+		percent := maxFloat(zipPrepBase(hasSubtitle)+scaledProgressFloat(effective, total, zipPrepWidth(hasSubtitle)), bootstrapFloor)
 		return progressSnapshot(percent, "准备截图", state.prepMarker.detail, state.prepMarker.current, total, state.prepMarker.percent <= 0)
 	}
 
 	if state.subtitleMarker != nil {
-		return progressSnapshot(subtitleProgressPercent(state.subtitleMarker), "准备字幕", state.subtitleMarker.detail, state.subtitleMarker.current, state.subtitleMarker.total, state.subtitleMarker.percent <= 0)
+		return progressSnapshot(maxFloat(subtitleProgressPercent(state.subtitleMarker), bootstrapFloor), "准备字幕", state.subtitleMarker.detail, state.subtitleMarker.current, state.subtitleMarker.total, state.subtitleMarker.percent <= 0)
+	}
+
+	if state.bootstrapMarker != nil {
+		total := maxInt(state.bootstrapMarker.total, 1)
+		return progressSnapshot(bootstrapFloor, "准备任务", state.bootstrapMarker.detail, state.bootstrapMarker.current, total, state.bootstrapMarker.percent <= 0)
 	}
 
 	return nil
@@ -384,6 +395,7 @@ func estimateZipProgressFromMarkers(requestedCount int, state screenshotProgress
 // estimateUploadProgressFromMarkers 会优先根据截图阶段标记估算图床上传模式进度。
 func estimateUploadProgressFromMarkers(requestedCount int, state screenshotProgressState) *transport.TaskProgress {
 	hasSubtitle := state.subtitleMarker != nil
+	bootstrapFloor := bootstrapProgressPercent(state.bootstrapMarker)
 	if state.uploadFinished {
 		processed := state.uploadProcessed
 		if state.uploadTotal > 0 {
@@ -394,7 +406,7 @@ func estimateUploadProgressFromMarkers(requestedCount int, state screenshotProgr
 
 	if state.uploadTotal > 0 {
 		processed := clampInt(state.uploadProcessed, 0, state.uploadTotal)
-		percent := uploadStageBase() + scaledProgress(processed, state.uploadTotal, uploadStageWidth())
+		percent := maxFloat(uploadStageBase()+scaledProgress(processed, state.uploadTotal, uploadStageWidth()), bootstrapFloor)
 		return progressSnapshot(percent, "上传图床", fmt.Sprintf("已处理 %d/%d 张截图上传。", processed, state.uploadTotal), processed, state.uploadTotal, false)
 	}
 
@@ -418,19 +430,24 @@ func estimateUploadProgressFromMarkers(requestedCount int, state screenshotProgr
 			detail = "截图已生成，正在准备上传图床。"
 			current = total
 		}
-		percent := uploadRenderBase(hasSubtitle) + scaledProgressFloat(effective, total, uploadRenderWidth(hasSubtitle))
+		percent := maxFloat(uploadRenderBase(hasSubtitle)+scaledProgressFloat(effective, total, uploadRenderWidth(hasSubtitle)), bootstrapFloor)
 		return progressSnapshot(percent, "生成截图", detail, current, total, indeterminate)
 	}
 
 	if state.prepMarker != nil {
 		total := maxInt(state.prepMarker.total, 1)
 		effective := markerStageProgress(state.prepMarker, 0.1)
-		percent := uploadPrepBase(hasSubtitle) + scaledProgressFloat(effective, total, uploadPrepWidth(hasSubtitle))
+		percent := maxFloat(uploadPrepBase(hasSubtitle)+scaledProgressFloat(effective, total, uploadPrepWidth(hasSubtitle)), bootstrapFloor)
 		return progressSnapshot(percent, "准备截图", state.prepMarker.detail, state.prepMarker.current, total, state.prepMarker.percent <= 0)
 	}
 
 	if state.subtitleMarker != nil {
-		return progressSnapshot(subtitleProgressPercent(state.subtitleMarker), "准备字幕", state.subtitleMarker.detail, state.subtitleMarker.current, state.subtitleMarker.total, state.subtitleMarker.percent <= 0)
+		return progressSnapshot(maxFloat(subtitleProgressPercent(state.subtitleMarker), bootstrapFloor), "准备字幕", state.subtitleMarker.detail, state.subtitleMarker.current, state.subtitleMarker.total, state.subtitleMarker.percent <= 0)
+	}
+
+	if state.bootstrapMarker != nil {
+		total := maxInt(state.bootstrapMarker.total, 1)
+		return progressSnapshot(bootstrapFloor, "准备任务", state.bootstrapMarker.detail, state.bootstrapMarker.current, total, state.bootstrapMarker.percent <= 0)
 	}
 
 	return nil
@@ -512,6 +529,20 @@ func subtitleProgressPercent(marker *screenshotProgressMarker) float64 {
 		return 0
 	}
 	return clampPercent(clampPercent(marker.percent) / 100.0 * float64(subtitleStageWidth()))
+}
+
+// bootstrapProgressPercent 会把截图启动阶段标记换算为整体任务前段的百分比。
+func bootstrapProgressPercent(marker *screenshotProgressMarker) float64 {
+	if marker == nil {
+		return 0
+	}
+	if marker.total > 0 && marker.current > 0 {
+		return clampPercent(markerStageProgress(marker, 0.1) / float64(marker.total) * 8)
+	}
+	if marker.percent <= 0 {
+		return 0
+	}
+	return clampPercent(clampPercent(marker.percent) / 100.0 * 8)
 }
 
 // estimateZipRunningProgress 会在缺少细粒度标记时估算压缩包模式的粗略进度。

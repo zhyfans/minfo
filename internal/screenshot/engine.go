@@ -194,12 +194,14 @@ type screenshotRunner struct {
 
 // runEngineScreenshotsWithLiveLogs 会解析输入源、生成随机时间点，并启动带实时日志的截图引擎流程。
 func runEngineScreenshotsWithLiveLogs(ctx context.Context, inputPath, outputDir, variant, subtitleMode string, count int, onLog LogHandler) (ScreenshotsResult, error) {
+	EmitProgressLog(onLog, "启动", 1, 3, "正在解析截图输入源。")
 	sourcePath, cleanup, err := media.ResolveScreenshotSource(ctx, inputPath)
 	if err != nil {
 		return ScreenshotsResult{}, err
 	}
 	defer cleanup()
 
+	EmitProgressLog(onLog, "启动", 2, 3, "正在定位 DVD 附加元数据源。")
 	dvdMediaInfoPath, dvdMediaInfoCleanup, dvdMediaInfoErr := media.ResolveDVDMediaInfoSource(ctx, inputPath)
 	if dvdMediaInfoErr == nil {
 		defer dvdMediaInfoCleanup()
@@ -207,7 +209,11 @@ func runEngineScreenshotsWithLiveLogs(ctx context.Context, inputPath, outputDir,
 		dvdMediaInfoPath = ""
 	}
 
+	detail := "正在估算影片时长并生成随机截图时间点。"
+	EmitProgressLog(onLog, "启动", 3, 3, detail)
+	stopHeartbeat := startStandaloneProgressHeartbeat(ctx, onLog, "启动", detail)
 	timestamps, err := randomScreenshotTimestampsForSource(ctx, sourcePath, count)
+	stopHeartbeat()
 	if err != nil {
 		return ScreenshotsResult{}, err
 	}
@@ -333,7 +339,7 @@ func (r *screenshotRunner) init(timestamps []string) error {
 	}
 
 	if looksLikeDVDSource(r.dvdProbeSource()) {
-		_, _, _ = r.ensureDVDMediaInfoResult()
+		r.preloadDVDMediaInfo()
 	}
 
 	if r.subtitleMode != SubtitleModeOff {
@@ -431,8 +437,15 @@ func (r *screenshotRunner) run() ([]string, error) {
 	startedShots := 0
 
 	for _, requested := range r.requested {
+		nextShot := startedShots + 1
+		r.activeShotIndex = nextShot
+		r.activeShotTotal = totalShots
+		r.activeShotName = ""
+		r.activeRenderPhase = ""
+
 		aligned := requested
 		if r.subtitle.Mode != "none" {
+			r.logShotAlignmentProgress()
 			aligned = r.alignToSubtitle(requested)
 		}
 		aligned = r.clampToDuration(aligned)
@@ -446,6 +459,10 @@ func (r *screenshotRunner) run() ([]string, error) {
 			aligned = candidate
 		} else {
 			r.logf("[提示] 请求 %s 对齐后未找到新的唯一秒，跳过该截图。", secToHMSMS(requested))
+			r.activeShotIndex = 0
+			r.activeShotTotal = 0
+			r.activeShotName = ""
+			r.activeRenderPhase = ""
 			continue
 		}
 
