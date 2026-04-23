@@ -9,17 +9,18 @@ import (
 	"time"
 
 	screenshotdvdinfo "minfo/internal/screenshot/dvdinfo"
+	screenshotruntime "minfo/internal/screenshot/runtime"
 )
 
 // TestBuildTextSubtitleFilterForInternalTextSubtitle 验证内封文字字幕过滤器会保持与 shell 一致的 si 写法。
 func TestBuildTextSubtitleFilterForInternalTextSubtitle(t *testing.T) {
 	runner := &screenshotRunner{
 		sourcePath: "/media/example/video.mkv",
-		media: runtimeMediaState{
+		media: screenshotruntime.MediaState{
 			VideoWidth:  1920,
 			VideoHeight: 1080,
 		},
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:          "internal",
 			RelativeIndex: 1,
 		},
@@ -40,11 +41,11 @@ func TestBuildTextSubtitleFilterForInternalTextSubtitle(t *testing.T) {
 // TestBuildTextSubtitleFilterForExternalSubtitle 验证外挂文字字幕过滤器也会保持 shell 的位置参数写法。
 func TestBuildTextSubtitleFilterForExternalSubtitle(t *testing.T) {
 	runner := &screenshotRunner{
-		media: runtimeMediaState{
+		media: screenshotruntime.MediaState{
 			VideoWidth:  1280,
 			VideoHeight: 720,
 		},
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode: "external",
 			File: "/media/example/subtitle.srt",
 		},
@@ -62,14 +63,14 @@ func TestBuildTextSubtitleFilterForExternalSubtitle(t *testing.T) {
 func TestBuildTextSubtitleFilterIncludesFontsDirWhenPrepared(t *testing.T) {
 	runner := &screenshotRunner{
 		sourcePath: "/media/example/video.mkv",
-		media: runtimeMediaState{
+		media: screenshotruntime.MediaState{
 			VideoWidth:  1920,
 			VideoHeight: 1080,
 		},
-		subtitleState: runtimeSubtitleState{
+		subtitleState: screenshotruntime.SubtitleState{
 			SubtitleFontDir: "/tmp/minfo-sub-fonts-123",
 		},
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:          "internal",
 			RelativeIndex: 1,
 		},
@@ -83,17 +84,17 @@ func TestBuildTextSubtitleFilterIncludesFontsDirWhenPrepared(t *testing.T) {
 
 func TestBuildPGSRenderFilterComplexAppliesVideoProcessingBeforeOverlay(t *testing.T) {
 	runner := &screenshotRunner{
-		media: runtimeMediaState{
+		media: screenshotruntime.MediaState{
 			DisplayWidth:  3840,
 			DisplayHeight: 2160,
 		},
-		render: runtimeRenderState{
+		render: screenshotruntime.RenderState{
 			ColorChain:           "libplacebo=colorspace=gbr",
 			AspectChain:          "setsar=1",
 			SubtitleCanvasWidth:  1920,
 			SubtitleCanvasHeight: 1080,
 		},
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:          "internal",
 			RelativeIndex: 2,
 			Codec:         "hdmv_pgs_subtitle",
@@ -114,10 +115,10 @@ func TestBuildPGSRenderFilterComplexAppliesVideoProcessingBeforeOverlay(t *testi
 
 func TestBuildPGSRenderFilterComplexFallsBackWhenCanvasUnknown(t *testing.T) {
 	runner := &screenshotRunner{
-		render: runtimeRenderState{
+		render: screenshotruntime.RenderState{
 			AspectChain: "setsar=1",
 		},
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:          "internal",
 			RelativeIndex: 1,
 			Codec:         "hdmv_pgs_subtitle",
@@ -135,7 +136,7 @@ func TestBuildPGSRenderFilterComplexFallsBackWhenCanvasUnknown(t *testing.T) {
 
 func TestRequiresTextSubtitleFilterForExternalSubtitle(t *testing.T) {
 	runner := &screenshotRunner{
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode: "external",
 			File: "/media/example/subtitle.srt",
 		},
@@ -148,7 +149,7 @@ func TestRequiresTextSubtitleFilterForExternalSubtitle(t *testing.T) {
 
 func TestRequiresTextSubtitleFilterForBitmapSubtitle(t *testing.T) {
 	runner := &screenshotRunner{
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:  "internal",
 			Codec: "hdmv_pgs_subtitle",
 		},
@@ -161,13 +162,13 @@ func TestRequiresTextSubtitleFilterForBitmapSubtitle(t *testing.T) {
 
 func TestRenderCoarseBackUsesDedicatedBitmapWindow(t *testing.T) {
 	runner := &screenshotRunner{
-		settings: variantSettings{
+		settings: screenshotruntime.VariantSettings{
 			CoarseBackPGS:  12,
 			RenderBackPGS:  2,
 			CoarseBackText: 3,
 			RenderBackText: 1,
 		},
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:  "internal",
 			Codec: "hdmv_pgs_subtitle",
 		},
@@ -180,16 +181,16 @@ func TestRenderCoarseBackUsesDedicatedBitmapWindow(t *testing.T) {
 
 func TestRenderCoarseBackUsesBitmapOverrideWhenPresent(t *testing.T) {
 	runner := &screenshotRunner{
-		settings: variantSettings{
+		settings: screenshotruntime.VariantSettings{
 			CoarseBackPGS:  12,
 			RenderBackPGS:  2,
 			CoarseBackText: 3,
 			RenderBackText: 1,
 		},
-		subtitleState: runtimeSubtitleState{
+		subtitleState: screenshotruntime.SubtitleState{
 			BitmapRenderBackOverride: 12,
 		},
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:  "internal",
 			Codec: "hdmv_pgs_subtitle",
 		},
@@ -202,7 +203,7 @@ func TestRenderCoarseBackUsesBitmapOverrideWhenPresent(t *testing.T) {
 
 func TestBuildTextSubtitleRenderChainUsesTimelineBaseAndSelect(t *testing.T) {
 	runner := &screenshotRunner{
-		render: runtimeRenderState{
+		render: screenshotruntime.RenderState{
 			AspectChain: "setsar=1",
 		},
 	}
@@ -217,7 +218,7 @@ func TestBuildTextSubtitleRenderChainUsesTimelineBaseAndSelect(t *testing.T) {
 
 func TestBuildTextSubtitleRenderChainUsesLibplaceboBeforeSubtitles(t *testing.T) {
 	runner := &screenshotRunner{
-		render: runtimeRenderState{
+		render: screenshotruntime.RenderState{
 			ColorChain:  "libplacebo=colorspace=gbr",
 			AspectChain: "setsar=1",
 		},
@@ -247,10 +248,10 @@ func TestIsLibplaceboRenderCrashMessage(t *testing.T) {
 
 func TestApplyLibplaceboRenderFallbackSwitchesToCompatibleChain(t *testing.T) {
 	runner := &screenshotRunner{
-		tools: runtimeToolchain{
+		tools: screenshotruntime.Toolchain{
 			LibplaceboReady: true,
 		},
-		render: runtimeRenderState{
+		render: screenshotruntime.RenderState{
 			ColorInfo:  "color_primaries=bt2020|color_space=bt2020nc|color_transfer=smpte2084|",
 			ColorChain: "libplacebo=colorspace=gbr",
 		},
@@ -321,7 +322,7 @@ func TestApproximateRenderProgressPercentFromElapsedFallback(t *testing.T) {
 
 func TestFFmpegSubtitleProgressPercentNormalizesFromFirstSubtitleTimestamp(t *testing.T) {
 	runner := &screenshotRunner{
-		media: runtimeMediaState{
+		media: screenshotruntime.MediaState{
 			Duration: 7200,
 		},
 	}
@@ -340,7 +341,7 @@ func TestFFmpegSubtitleProgressPercentNormalizesFromFirstSubtitleTimestamp(t *te
 // TestFFmpegSubtitleProgressDetailUsesProcessedDuration 验证内封字幕提取进度会展示已处理时长和总时长。
 func TestFFmpegSubtitleProgressDetailUsesProcessedDuration(t *testing.T) {
 	runner := &screenshotRunner{
-		media: runtimeMediaState{
+		media: screenshotruntime.MediaState{
 			Duration: 100,
 		},
 	}
@@ -357,7 +358,7 @@ func TestFFmpegSubtitleProgressDetailUsesProcessedDuration(t *testing.T) {
 // TestFFmpegSubtitleProgressDetailNormalizesFromFirstSubtitleTimestamp 验证提取进度展示会与首条字幕时间戳对齐。
 func TestFFmpegSubtitleProgressDetailNormalizesFromFirstSubtitleTimestamp(t *testing.T) {
 	runner := &screenshotRunner{
-		media: runtimeMediaState{
+		media: screenshotruntime.MediaState{
 			Duration: 7200,
 		},
 	}
@@ -388,7 +389,7 @@ func TestLogShotAlignmentProgressUsesCurrentShotIndex(t *testing.T) {
 // TestLogBitmapSubtitleVisibilityProgressUsesBitmapKind 验证位图字幕校验阶段会输出对应字幕类型提示。
 func TestLogBitmapSubtitleVisibilityProgressUsesBitmapKind(t *testing.T) {
 	runner := &screenshotRunner{
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:  "internal",
 			Codec: "hdmv_pgs_subtitle",
 		},

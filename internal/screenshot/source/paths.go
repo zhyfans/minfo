@@ -3,47 +3,14 @@
 package source
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-
-	"minfo/internal/media"
 )
 
 var clipIDPattern = regexp.MustCompile(`[0-9]{5}M2TS`)
-
-// ResolvedInput 表示截图入口阶段解析出的主媒体源与 DVD 附加探测源。
-type ResolvedInput struct {
-	SourcePath       string
-	DVDMediaInfoPath string
-	Cleanup          func()
-}
-
-// ResolveInput 会把外部输入路径解析为截图主媒体源和 DVD 附加探测源。
-func ResolveInput(ctx context.Context, inputPath string) (ResolvedInput, error) {
-	sourcePath, cleanupSource, err := media.ResolveScreenshotSource(ctx, inputPath)
-	if err != nil {
-		return ResolvedInput{}, err
-	}
-
-	dvdMediaInfoPath, cleanupDVD, dvdMediaInfoErr := media.ResolveDVDMediaInfoSource(ctx, inputPath)
-	if dvdMediaInfoErr != nil {
-		dvdMediaInfoPath = ""
-		cleanupDVD = func() {}
-	}
-
-	return ResolvedInput{
-		SourcePath:       sourcePath,
-		DVDMediaInfoPath: dvdMediaInfoPath,
-		Cleanup: func() {
-			cleanupDVD()
-			cleanupSource()
-		},
-	}, nil
-}
 
 // LooksLikeDVDSource 通过路径特征判断输入是否看起来像 DVD VIDEO_TS 源。
 func LooksLikeDVDSource(path string) bool {

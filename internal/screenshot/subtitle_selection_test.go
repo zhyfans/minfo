@@ -8,6 +8,7 @@ import (
 	"time"
 
 	screenshotprogress "minfo/internal/screenshot/progress"
+	screenshotruntime "minfo/internal/screenshot/runtime"
 	screenshotsubtitle "minfo/internal/screenshot/subtitle"
 )
 
@@ -18,17 +19,17 @@ func TestSubtitleNeedsBluraySupplementSkipsGenericChinese(t *testing.T) {
 }
 
 func TestPreferPreferredSubtitleRankPrefersHigherPayloadBytesForSameLanguagePGS(t *testing.T) {
-	best := preferredSubtitleRank{
+	best := screenshotruntime.PreferredSubtitleRank{
 		LangClass:       "zh",
 		LangScore:       screenshotsubtitle.LanguageScore("zh"),
-		BitmapKind:      bitmapSubtitlePGS,
+		BitmapKind:      screenshotruntime.BitmapSubtitlePGS,
 		PayloadBytes:    100,
 		UsePayloadBytes: true,
 	}
-	current := preferredSubtitleRank{
+	current := screenshotruntime.PreferredSubtitleRank{
 		LangClass:       "zh",
 		LangScore:       screenshotsubtitle.LanguageScore("zh"),
-		BitmapKind:      bitmapSubtitlePGS,
+		BitmapKind:      screenshotruntime.BitmapSubtitlePGS,
 		PayloadBytes:    200,
 		UsePayloadBytes: true,
 	}
@@ -39,22 +40,22 @@ func TestPreferPreferredSubtitleRankPrefersHigherPayloadBytesForSameLanguagePGS(
 }
 
 func TestBlurayHelperNeedsPayloadScanForSameLanguagePGS(t *testing.T) {
-	raw := []subtitleTrack{
+	raw := []screenshotruntime.SubtitleTrack{
 		{StreamID: "0x1201", Codec: "hdmv_pgs_subtitle"},
 		{StreamID: "0x1202", Codec: "hdmv_pgs_subtitle"},
 	}
-	helper := []blurayHelperTrack{
+	helper := []screenshotruntime.BlurayHelperTrack{
 		{PID: 0x1201, Lang: "zho"},
 		{PID: 0x1202, Lang: "zho"},
 	}
 
-	if !screenshotsubtitle.HelperNeedsPayloadScan(raw, blurayHelperResult{BitrateMode: "metadata-only"}, helper, nil, "helper") {
+	if !screenshotsubtitle.HelperNeedsPayloadScan(raw, screenshotruntime.BlurayHelperResult{BitrateMode: "metadata-only"}, helper, nil, "helper") {
 		t.Fatalf("expected same-language PGS tracks to require payload scan")
 	}
 }
 
 func TestBlurayHelperHasPayloadBytesAcceptsSampledMode(t *testing.T) {
-	if !screenshotsubtitle.HelperHasPayloadBytes(blurayHelperResult{BitrateMode: "sampled-payload-bytes"}) {
+	if !screenshotsubtitle.HelperHasPayloadBytes(screenshotruntime.BlurayHelperResult{BitrateMode: "sampled-payload-bytes"}) {
 		t.Fatalf("expected sampled payload mode to be treated as payload-ready")
 	}
 }
@@ -62,7 +63,7 @@ func TestBlurayHelperHasPayloadBytesAcceptsSampledMode(t *testing.T) {
 func TestShouldExtractInternalTextSubtitleForTextSubtitle(t *testing.T) {
 	runner := &screenshotRunner{
 		requested: []float64{10, 20, 30, 40},
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:  "internal",
 			Codec: "subrip",
 		},
@@ -76,7 +77,7 @@ func TestShouldExtractInternalTextSubtitleForTextSubtitle(t *testing.T) {
 func TestShouldExtractInternalTextSubtitleForSingleShotTask(t *testing.T) {
 	runner := &screenshotRunner{
 		requested: []float64{10},
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:  "internal",
 			Codec: "subrip",
 		},
@@ -90,7 +91,7 @@ func TestShouldExtractInternalTextSubtitleForSingleShotTask(t *testing.T) {
 func TestShouldExtractInternalTextSubtitleSkipsASSLikeCodecs(t *testing.T) {
 	runner := &screenshotRunner{
 		requested: []float64{10, 20},
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:  "internal",
 			Codec: "ass",
 		},
@@ -104,7 +105,7 @@ func TestShouldExtractInternalTextSubtitleSkipsASSLikeCodecs(t *testing.T) {
 func TestShouldUseEmbeddedSubtitleFontsForMatroskaASS(t *testing.T) {
 	runner := &screenshotRunner{
 		sourcePath: "/tmp/demo.mkv",
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:  "external",
 			Codec: "ass",
 		},
@@ -119,14 +120,14 @@ func TestShouldUseEmbeddedSubtitleFontsSkipsNonASSAndNonMatroska(t *testing.T) {
 	tests := []screenshotRunner{
 		{
 			sourcePath: "/tmp/demo.mp4",
-			subtitle: subtitleSelection{
+			subtitle: screenshotruntime.SubtitleSelection{
 				Mode:  "external",
 				Codec: "ass",
 			},
 		},
 		{
 			sourcePath: "/tmp/demo.mkv",
-			subtitle: subtitleSelection{
+			subtitle: screenshotruntime.SubtitleSelection{
 				Mode:  "external",
 				Codec: "subrip",
 			},
@@ -170,7 +171,7 @@ func TestIsSupportedTextSubtitlePath(t *testing.T) {
 
 func TestPrepareTextSubtitleRenderSourceReturnsErrorForUnsupportedTextSubtitle(t *testing.T) {
 	runner := &screenshotRunner{
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:  "internal",
 			Codec: "mov_text",
 		},
@@ -199,7 +200,7 @@ func TestChooseSubtitleReturnsErrorForUnsupportedExternalTextSubtitle(t *testing
 	runner := &screenshotRunner{
 		sourcePath:   videoPath,
 		subtitleMode: SubtitleModeAuto,
-		subtitle:     subtitleSelection{},
+		subtitle:     screenshotruntime.SubtitleSelection{},
 	}
 
 	err := runner.chooseSubtitle()
@@ -270,7 +271,7 @@ func TestPreloadDVDMediaInfoLogsProgressBeforeProbe(t *testing.T) {
 		ctx:          nil,
 		sourcePath:   "/tmp/VIDEO_TS/VTS_01_1.VOB",
 		subtitleMode: SubtitleModeAuto,
-		tools: runtimeToolchain{
+		tools: screenshotruntime.Toolchain{
 			MediaInfoBin: "__missing_mediainfo__",
 		},
 	}
@@ -284,7 +285,7 @@ func TestPreloadDVDMediaInfoLogsProgressBeforeProbe(t *testing.T) {
 
 func TestShouldEmitSubtitleIndexProgressForPGS(t *testing.T) {
 	runner := &screenshotRunner{
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:  "internal",
 			Codec: "hdmv_pgs_subtitle",
 		},
@@ -297,7 +298,7 @@ func TestShouldEmitSubtitleIndexProgressForPGS(t *testing.T) {
 
 func TestShouldEmitSubtitleIndexProgressSkipsExtractedText(t *testing.T) {
 	runner := &screenshotRunner{
-		subtitle: subtitleSelection{
+		subtitle: screenshotruntime.SubtitleSelection{
 			Mode:          "external",
 			Codec:         "subrip",
 			ExtractedText: true,

@@ -45,7 +45,7 @@ func handleScreenshotsPost(w http.ResponseWriter, r *http.Request) {
 	logger := newInfoLogger()
 	defer logger.Close()
 
-	path, cleanup, err := transport.InputPath(r)
+	request, err := parseScreenshotFormRequest(r)
 	if err != nil {
 		transport.WriteJSON(w, http.StatusBadRequest, transport.InfoResponse{
 			OK:         false,
@@ -55,17 +55,12 @@ func handleScreenshotsPost(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	defer cleanup()
-
-	mode := screenshot.NormalizeMode(r.FormValue("mode"))
-	variant := screenshot.NormalizeVariant(r.FormValue("variant"))
-	subtitleMode := screenshot.NormalizeSubtitleMode(r.FormValue("subtitle_mode"))
-	count := screenshot.NormalizeCount(r.FormValue("count"))
+	defer request.Cleanup()
 
 	ctx, cancel := context.WithTimeout(r.Context(), config.RequestTimeout)
 	defer cancel()
 
-	tempDir, err := os.MkdirTemp("", "minfo-shots-*")
+	tempDir, err := createScreenshotTempDir("minfo-shots-*")
 	if err != nil {
 		transport.WriteJSON(w, http.StatusInternalServerError, transport.InfoResponse{
 			OK:         false,
@@ -77,8 +72,8 @@ func handleScreenshotsPost(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(tempDir)
 
-	if mode == screenshot.ModeLinks {
-		result, err := screenshot.RunUploadWithLiveLogs(ctx, path, tempDir, variant, subtitleMode, count, logger.LogLine)
+	if request.Mode == screenshot.ModeLinks {
+		result, err := screenshot.RunUploadWithLiveLogs(ctx, request.InputPath, tempDir, request.Variant, request.SubtitleMode, request.Count, logger.LogLine)
 		if err != nil {
 			transport.WriteJSON(w, http.StatusInternalServerError, transport.InfoResponse{
 				OK:         false,
@@ -101,7 +96,7 @@ func handleScreenshotsPost(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if shouldPrepareDownload(r) {
-		downloadURL, logs, err := prepareScreenshotZipDownload(ctx, path, tempDir, variant, subtitleMode, count, logger.LogLine)
+		downloadURL, logs, err := prepareScreenshotZipDownload(ctx, request.InputPath, tempDir, request.Variant, request.SubtitleMode, request.Count, logger.LogLine)
 		if err != nil {
 			transport.WriteJSON(w, http.StatusInternalServerError, transport.InfoResponse{
 				OK:         false,
@@ -120,7 +115,7 @@ func handleScreenshotsPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := writeScreenshotZipResponse(ctx, w, path, tempDir, variant, subtitleMode, count); err != nil {
+	if err := writeScreenshotZipResponse(ctx, w, request.InputPath, tempDir, request.Variant, request.SubtitleMode, request.Count); err != nil {
 		transport.WriteError(w, http.StatusInternalServerError, err.Error())
 	}
 }
@@ -139,21 +134,19 @@ func handleScreenshotZipDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cleanup()
-	variant := screenshot.NormalizeVariant(r.URL.Query().Get("variant"))
-	subtitleMode := screenshot.NormalizeSubtitleMode(r.URL.Query().Get("subtitle_mode"))
-	count := screenshot.NormalizeCount(r.URL.Query().Get("count"))
+	options := normalizeScreenshotQueryOptions(r)
 
 	ctx, cancel := context.WithTimeout(r.Context(), config.RequestTimeout)
 	defer cancel()
 
-	tempDir, err := os.MkdirTemp("", "minfo-shots-*")
+	tempDir, err := createScreenshotTempDir("minfo-shots-*")
 	if err != nil {
 		transport.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer os.RemoveAll(tempDir)
 
-	if err := writeScreenshotZipResponse(ctx, w, path, tempDir, variant, subtitleMode, count); err != nil {
+	if err := writeScreenshotZipResponse(ctx, w, path, tempDir, options.Variant, options.SubtitleMode, options.Count); err != nil {
 		transport.WriteError(w, http.StatusInternalServerError, err.Error())
 	}
 }

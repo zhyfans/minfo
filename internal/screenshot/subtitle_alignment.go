@@ -6,9 +6,12 @@ import (
 	"math"
 	"sort"
 
+	screenshotruntime "minfo/internal/screenshot/runtime"
 	screenshotsubtitle "minfo/internal/screenshot/subtitle"
 	screenshottimestamps "minfo/internal/screenshot/timestamps"
 )
+
+const subtitleSnapEpsilon = 0.50
 
 // resolveUniqueScreenshotSecond 会在已占用秒级时间点集合中寻找一个不冲突的截图时间点。
 func (r *screenshotRunner) resolveUniqueScreenshotSecond(requested, aligned float64, usedSeconds map[int]struct{}) (float64, bool, bool) {
@@ -180,7 +183,7 @@ func (r *screenshotRunner) findNearestVisibleBitmapIndexedCandidate(requested fl
 		return 0, false
 	}
 
-	spans := append([]subtitleSpan(nil), r.subtitleState.Index...)
+	spans := append([]screenshotruntime.SubtitleSpan(nil), r.subtitleState.Index...)
 	sort.Slice(spans, func(i, j int) bool {
 		left := math.Abs(screenshotsubtitle.BitmapSnapPoint(spans[i], subtitleSnapEpsilon) - requested)
 		right := math.Abs(screenshotsubtitle.BitmapSnapPoint(spans[j], subtitleSnapEpsilon) - requested)
@@ -212,4 +215,8 @@ func (r *screenshotRunner) clampToDuration(value float64) float64 {
 		return r.media.Duration
 	}
 	return value
+}
+
+func floatDiffGT(a, b float64) bool {
+	return math.Abs(a-b) > 0.0005
 }

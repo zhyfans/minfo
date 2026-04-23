@@ -4,8 +4,11 @@ package screenshot
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 
+	screenshotdvdinfo "minfo/internal/screenshot/dvdinfo"
+	screenshotruntime "minfo/internal/screenshot/runtime"
 	screenshotsource "minfo/internal/screenshot/source"
 	screenshotsubtitle "minfo/internal/screenshot/subtitle"
 	screenshottimestamps "minfo/internal/screenshot/timestamps"
@@ -262,10 +265,45 @@ func (r *screenshotRunner) logSelectedSubtitleSummary() {
 	r.subtitleFlow().LogSelectedSubtitleSummary()
 }
 
-func (r *screenshotRunner) ensureSubtitleIndex() []subtitleSpan {
+func (r *screenshotRunner) ensureSubtitleIndex() []screenshotruntime.SubtitleSpan {
 	return r.subtitleFlow().EnsureIndex()
 }
 
 func internalTextSubtitleExtractionPlan(codec string) (string, string, string, string) {
 	return screenshotsubtitle.InternalTextSubtitleExtractionPlan(codec)
+}
+
+// ensureDVDMediaInfoResult 在 DVD 场景下只探测一次 mediainfo 结果，并缓存供后续字幕与比例逻辑复用。
+func (r *screenshotRunner) ensureDVDMediaInfoResult() (screenshotruntime.DVDMediaInfoResult, bool, error) {
+	if r == nil || strings.TrimSpace(r.tools.MediaInfoBin) == "" {
+		return screenshotruntime.DVDMediaInfoResult{}, false, nil
+	}
+	if !screenshotsource.LooksLikeDVDSource(r.sourcePath) {
+		return screenshotruntime.DVDMediaInfoResult{}, false, nil
+	}
+	if r.subtitleState.HasDVDMediaInfoResult {
+		return r.subtitleState.DVDMediaInfoResult, true, nil
+	}
+
+	result, err := screenshotdvdinfo.Probe(r.ctx, r.tools.MediaInfoBin, r.sourcePath, r.dvdMediaInfoPath)
+	if err != nil {
+		return screenshotruntime.DVDMediaInfoResult{}, false, err
+	}
+	r.subtitleState.DVDMediaInfoResult = result
+	r.subtitleState.HasDVDMediaInfoResult = true
+	return result, true, nil
+}
+
+// clearDir 删除目录下的所有内容，但保留目录本身。
+func clearDir(path string) error {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := os.RemoveAll(filepath.Join(path, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
 }

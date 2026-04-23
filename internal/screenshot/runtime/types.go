@@ -1,5 +1,7 @@
-// Package runtime 定义截图运行时在子包之间共享的内部模型。
+// Package runtime 定义截图运行时在子包之间共享的模型、枚举和变体配置。
 package runtime
+
+import "strings"
 
 // VariantSettings 描述单种截图输出格式对应的探测、搜索和编码参数。
 type VariantSettings struct {
@@ -13,6 +15,38 @@ type VariantSettings struct {
 	SearchBack     float64
 	SearchForward  float64
 	JPGQuality     int
+}
+
+// VariantSettingsFor 会根据输出格式选择对应的探测、搜索和编码参数。
+func VariantSettingsFor(variant string) VariantSettings {
+	switch strings.ToLower(strings.TrimSpace(variant)) {
+	case "jpg":
+		return VariantSettings{
+			Ext:            ".jpg",
+			ProbeSize:      "100M",
+			Analyze:        "100M",
+			CoarseBackText: 2,
+			CoarseBackPGS:  8,
+			RenderBackText: 1,
+			RenderBackPGS:  2,
+			SearchBack:     4,
+			SearchForward:  8,
+			JPGQuality:     1,
+		}
+	default:
+		return VariantSettings{
+			Ext:            ".png",
+			ProbeSize:      "150M",
+			Analyze:        "150M",
+			CoarseBackText: 3,
+			CoarseBackPGS:  12,
+			RenderBackText: 1,
+			RenderBackPGS:  2,
+			SearchBack:     6,
+			SearchForward:  10,
+			JPGQuality:     85,
+		}
+	}
 }
 
 // BitmapSubtitleKind 表示当前字幕流对应的位图字幕类型。

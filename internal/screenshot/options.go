@@ -41,21 +41,14 @@ func NormalizeSubtitleMode(raw string) string {
 func NormalizeCount(raw string) int {
 	value := strings.TrimSpace(raw)
 	if value == "" {
-		return defaultScreenshotCount
+		return normalizeScreenshotCount(0)
 	}
 
 	count, err := strconv.Atoi(value)
 	if err != nil {
-		return defaultScreenshotCount
+		return normalizeScreenshotCount(0)
 	}
-	switch {
-	case count < minScreenshotCount:
-		return minScreenshotCount
-	case count > maxScreenshotCount:
-		return maxScreenshotCount
-	default:
-		return count
-	}
+	return normalizeScreenshotCount(count)
 }
 
 // normalizeScreenshotCount 规范化内部流程使用的截图数量。

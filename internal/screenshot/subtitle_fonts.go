@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	screenshotruntime "minfo/internal/screenshot/runtime"
 	screenshotsubtitle "minfo/internal/screenshot/subtitle"
 	"minfo/internal/system"
 )
@@ -101,7 +102,7 @@ func (r *screenshotRunner) probeEmbeddedFontAttachments() ([]subtitleFontAttachm
 		return nil, nil
 	}
 
-	var payload ffprobeStreamsPayload
+	var payload screenshotruntime.FFprobeStreamsPayload
 	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
 		return nil, err
 	}

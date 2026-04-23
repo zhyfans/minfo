@@ -2,7 +2,14 @@
 
 package screenshot
 
-import "context"
+import (
+	"context"
+	"strings"
+
+	screenshotpixhost "minfo/internal/screenshot/pixhost"
+)
+
+const oversizeBytes = 10 * 1024 * 1024
 
 // RunScreenshots 执行截图流程并仅返回生成的文件列表。
 func RunScreenshots(ctx context.Context, inputPath, outputDir, variant, subtitleMode string, count int) ([]string, error) {
@@ -44,5 +51,38 @@ func RunUploadWithLiveLogs(ctx context.Context, inputPath, outputDir, variant, s
 
 // RunUploadWithLiveEvents 会执行截图加上传流程，并把实时日志和已完成图片逐步暴露给调用方。
 func RunUploadWithLiveEvents(ctx context.Context, inputPath, outputDir, variant, subtitleMode string, count int, onLog LogHandler, onItem UploadItemHandler) (UploadResult, error) {
-	return runPixhostUploadWithLiveLogs(ctx, inputPath, outputDir, variant, subtitleMode, count, onLog, onItem)
+	screenshotResult, err := runEngineScreenshotsWithLiveLogs(ctx, inputPath, outputDir, variant, subtitleMode, count, onLog)
+	if err != nil {
+		return UploadResult{Logs: screenshotResult.Logs}, err
+	}
+
+	uploadResult, err := screenshotpixhost.UploadImages(ctx, screenshotResult.Files, screenshotResult.LossyPNGFiles, oversizeBytes, onLog, onItem)
+	logs := mergeUploadLogs(screenshotResult.Logs, uploadResult.Logs)
+	if err != nil {
+		return UploadResult{
+			Logs:            logs,
+			Items:           uploadResult.Items,
+			LossyPNGFiles:   screenshotResult.LossyPNGFiles,
+			LossyPNGIndexes: uploadResult.LossyIndexes,
+		}, err
+	}
+	return UploadResult{
+		Output:          uploadResult.Output,
+		Logs:            logs,
+		Items:           uploadResult.Items,
+		LossyPNGFiles:   screenshotResult.LossyPNGFiles,
+		LossyPNGIndexes: uploadResult.LossyIndexes,
+	}, nil
+}
+
+// mergeUploadLogs 会把截图阶段和上传阶段日志按原顺序拼接成最终输出。
+func mergeUploadLogs(screenshotLogs, uploadLogs string) string {
+	parts := make([]string, 0, 2)
+	if strings.TrimSpace(screenshotLogs) != "" {
+		parts = append(parts, strings.TrimSpace(screenshotLogs))
+	}
+	if strings.TrimSpace(uploadLogs) != "" {
+		parts = append(parts, strings.TrimSpace(uploadLogs))
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	screenshotruntime "minfo/internal/screenshot/runtime"
 	screenshottimestamps "minfo/internal/screenshot/timestamps"
 )
 
@@ -129,18 +130,18 @@ func (r *screenshotRunner) buildTextSubtitleFilter() string {
 }
 
 // bitmapSubtitleKind 返回当前字幕 codec 对应的位图字幕类型。
-func (r *screenshotRunner) bitmapSubtitleKind() bitmapSubtitleKind {
+func (r *screenshotRunner) bitmapSubtitleKind() screenshotruntime.BitmapSubtitleKind {
 	return bitmapSubtitleKindFromCodec(r.subtitle.Codec)
 }
 
 // isPGSSubtitle 会判断PGS字幕是否满足当前条件。
 func (r *screenshotRunner) isPGSSubtitle() bool {
-	return r.bitmapSubtitleKind() == bitmapSubtitlePGS
+	return r.bitmapSubtitleKind() == screenshotruntime.BitmapSubtitlePGS
 }
 
 // isDVDSubtitle 会判断DVD字幕是否满足当前条件。
 func (r *screenshotRunner) isDVDSubtitle() bool {
-	return r.bitmapSubtitleKind() == bitmapSubtitleDVD
+	return r.bitmapSubtitleKind() == screenshotruntime.BitmapSubtitleDVD
 }
 
 // isSupportedBitmapSubtitle 会判断受支持位图字幕是否满足当前条件。
@@ -163,14 +164,14 @@ func (r *screenshotRunner) requiresTextSubtitleFilter() bool {
 }
 
 // bitmapSubtitleKindFromCodec 把 codec 名称映射到内部使用的位图字幕类型枚举。
-func bitmapSubtitleKindFromCodec(codec string) bitmapSubtitleKind {
+func bitmapSubtitleKindFromCodec(codec string) screenshotruntime.BitmapSubtitleKind {
 	switch strings.ToLower(strings.TrimSpace(codec)) {
 	case "hdmv_pgs_subtitle", "pgssub":
-		return bitmapSubtitlePGS
+		return screenshotruntime.BitmapSubtitlePGS
 	case "dvd_subtitle":
-		return bitmapSubtitleDVD
+		return screenshotruntime.BitmapSubtitleDVD
 	default:
-		return bitmapSubtitleNone
+		return screenshotruntime.BitmapSubtitleNone
 	}
 }
 
@@ -182,4 +183,16 @@ func isUnsupportedBitmapSubtitleCodec(codec string) bool {
 	default:
 		return false
 	}
+}
+
+// escapeFilterValue 转义 ffmpeg 字幕过滤器里使用的路径值。
+func escapeFilterValue(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `'`, `\'`)
+	value = strings.ReplaceAll(value, `:`, `\:`)
+	value = strings.ReplaceAll(value, `,`, `\,`)
+	value = strings.ReplaceAll(value, `;`, `\;`)
+	value = strings.ReplaceAll(value, `[`, `\[`)
+	value = strings.ReplaceAll(value, `]`, `\]`)
+	return value
 }

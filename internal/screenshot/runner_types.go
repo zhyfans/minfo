@@ -2,7 +2,11 @@
 
 package screenshot
 
-import "context"
+import (
+	"context"
+
+	screenshotruntime "minfo/internal/screenshot/runtime"
+)
 
 type screenshotRunner struct {
 	ctx              context.Context
@@ -12,15 +16,15 @@ type screenshotRunner struct {
 	variant          string
 	subtitleMode     string
 	requested        []float64
-	settings         variantSettings
-	tools            runtimeToolchain
-	logger           runtimeLogger
+	settings         screenshotruntime.VariantSettings
+	tools            screenshotruntime.Toolchain
+	logger           screenshotruntime.Logger
 	lossyPNGFiles    map[string]struct{}
-	media            runtimeMediaState
-	render           runtimeRenderState
-	subtitleState    runtimeSubtitleState
+	media            screenshotruntime.MediaState
+	render           screenshotruntime.RenderState
+	subtitleState    screenshotruntime.SubtitleState
 
-	subtitle subtitleSelection
+	subtitle screenshotruntime.SubtitleSelection
 
-	activeShot activeShotState
+	activeShot screenshotruntime.ActiveShot
 }

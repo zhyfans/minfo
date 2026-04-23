@@ -458,3 +458,18 @@ func joinFilters(parts ...string) string {
 	}
 	return strings.Join(filters, ",")
 }
+
+func firstFloatLine(output string) (float64, bool) {
+	for _, line := range strings.Split(output, "\n") {
+		value := strings.TrimSpace(line)
+		if value == "" || value == "N/A" {
+			continue
+		}
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+			continue
+		}
+		return parsed, true
+	}
+	return 0, false
+}

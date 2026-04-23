@@ -9,12 +9,13 @@ import (
 	"path/filepath"
 	"strconv"
 
+	screenshotruntime "minfo/internal/screenshot/runtime"
 	screenshottimestamps "minfo/internal/screenshot/timestamps"
 )
 
 // captureScreenshot 会执行一次完整截图，并在文件过大时自动触发重编码兜底。
 func (r *screenshotRunner) captureScreenshot(aligned float64, path string) error {
-	r.activeShot.SetPhase(activeShotPhaseRender)
+	r.activeShot.SetPhase(screenshotruntime.ActiveShotPhaseRender)
 	if err := r.runRenderWithLibplaceboFallback(func() error {
 		return r.capturePrimary(aligned, path)
 	}); err != nil {
@@ -38,20 +39,20 @@ func (r *screenshotRunner) captureScreenshot(aligned float64, path string) error
 
 	r.logf("[提示] %s 大小 %.2fMB，重拍降低质量...", filepath.Base(path), sizeMB)
 	tempPath := path + ".tmp" + r.settings.Ext
-	r.activeShot.SetPhase(activeShotPhaseReencode)
+	r.activeShot.SetPhase(screenshotruntime.ActiveShotPhaseReencode)
 	if err := r.runRenderWithLibplaceboFallback(func() error {
 		return r.captureReencoded(aligned, tempPath)
 	}); err != nil {
 		_ = os.Remove(tempPath)
 		r.logf("[警告] 重拍失败，保留原始截图：%s", err.Error())
-		r.activeShot.SetPhase(activeShotPhaseRender)
+		r.activeShot.SetPhase(screenshotruntime.ActiveShotPhaseRender)
 		return nil
 	}
 	if err := os.Rename(tempPath, path); err != nil {
 		_ = os.Remove(tempPath)
 		return err
 	}
-	r.activeShot.SetPhase(activeShotPhaseRender)
+	r.activeShot.SetPhase(screenshotruntime.ActiveShotPhaseRender)
 	return nil
 }
 
