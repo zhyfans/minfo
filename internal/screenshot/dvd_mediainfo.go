@@ -17,24 +17,6 @@ import (
 	"minfo/internal/system"
 )
 
-type dvdMediaInfoTrack struct {
-	StreamID int
-	ID       string
-	Format   string
-	Language string
-	Title    string
-	Source   string
-}
-
-type dvdMediaInfoResult struct {
-	Duration             float64
-	DisplayAspectRatio   string
-	Tracks               []dvdMediaInfoTrack
-	ProbePath            string
-	SelectedVOBPath      string
-	LanguageFallbackPath string
-}
-
 type mediaInfoPayload struct {
 	Media struct {
 		Track []map[string]interface{} `json:"track"`
@@ -77,22 +59,22 @@ func probeDVDMediaInfo(ctx context.Context, mediainfoBin, path, probePath string
 
 // ensureDVDMediaInfoResult 在 DVD 场景下只探测一次 mediainfo 结果，并缓存供后续字幕与比例逻辑复用。
 func (r *screenshotRunner) ensureDVDMediaInfoResult() (dvdMediaInfoResult, bool, error) {
-	if r == nil || strings.TrimSpace(r.mediainfoBin) == "" {
+	if r == nil || strings.TrimSpace(r.tools.MediaInfoBin) == "" {
 		return dvdMediaInfoResult{}, false, nil
 	}
 	if !looksLikeDVDSource(r.dvdProbeSource()) {
 		return dvdMediaInfoResult{}, false, nil
 	}
-	if r.hasDVDMediaInfoResult {
-		return r.dvdMediaInfoResult, true, nil
+	if r.subtitleState.HasDVDMediaInfoResult {
+		return r.subtitleState.DVDMediaInfoResult, true, nil
 	}
 
-	result, err := probeDVDMediaInfo(r.ctx, r.mediainfoBin, r.dvdSelectedIFOPath(), r.dvdSelectedVOBPath())
+	result, err := probeDVDMediaInfo(r.ctx, r.tools.MediaInfoBin, r.dvdSelectedIFOPath(), r.dvdSelectedVOBPath())
 	if err != nil {
 		return dvdMediaInfoResult{}, false, err
 	}
-	r.dvdMediaInfoResult = result
-	r.hasDVDMediaInfoResult = true
+	r.subtitleState.DVDMediaInfoResult = result
+	r.subtitleState.HasDVDMediaInfoResult = true
 	return result, true, nil
 }
 

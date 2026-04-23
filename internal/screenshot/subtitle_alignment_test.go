@@ -50,8 +50,10 @@ func TestSubtitleIndexScanProgressDetail(t *testing.T) {
 func TestProbePacketSpansParsesCompactOutput(t *testing.T) {
 	script := writeExecutableTestScript(t, "printf '1.000|0.500|600\n2.000|0.250|50\n3.000|0.250|700\n'\n")
 	runner := &screenshotRunner{
-		ctx:        context.Background(),
-		ffprobeBin: script,
+		ctx: context.Background(),
+		tools: runtimeToolchain{
+			FFprobeBin: script,
+		},
 	}
 
 	spans, err := runner.probePacketSpans(nil, true, 100, -1, 0)
@@ -73,9 +75,13 @@ func TestProbePacketSpansParsesCompactOutput(t *testing.T) {
 func TestProbePacketSpansEmitsPTSBasedProgress(t *testing.T) {
 	script := writeExecutableTestScript(t, "printf '10.000|0.500|600\n50.000|0.250|700\n90.000|0.250|900\n'\n")
 	runner := &screenshotRunner{
-		ctx:        context.Background(),
-		ffprobeBin: script,
-		duration:   100,
+		ctx: context.Background(),
+		tools: runtimeToolchain{
+			FFprobeBin: script,
+		},
+		media: runtimeMediaState{
+			Duration: 100,
+		},
 		subtitle: subtitleSelection{
 			Mode:  "internal",
 			Codec: "hdmv_pgs_subtitle",

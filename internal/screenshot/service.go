@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	screenshotruntime "minfo/internal/screenshot/runtime"
 	"minfo/internal/system"
 )
 
@@ -69,7 +70,7 @@ type UploadResult struct {
 }
 
 // LogHandler 处理截图流程产生的单行实时日志。
-type LogHandler func(line string)
+type LogHandler = screenshotruntime.LineHandler
 
 // startStandaloneProgressHeartbeat 会通过外部日志回调周期性输出进度心跳，并返回停止函数。
 func startStandaloneProgressHeartbeat(ctx context.Context, onLog LogHandler, stage, detail string) func() {

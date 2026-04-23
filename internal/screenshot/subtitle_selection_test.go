@@ -267,7 +267,9 @@ func TestPreloadDVDMediaInfoLogsProgressBeforeProbe(t *testing.T) {
 		ctx:          nil,
 		sourcePath:   "/tmp/VIDEO_TS/VTS_01_1.VOB",
 		subtitleMode: SubtitleModeAuto,
-		mediainfoBin: "__missing_mediainfo__",
+		tools: runtimeToolchain{
+			MediaInfoBin: "__missing_mediainfo__",
+		},
 	}
 
 	runner.preloadDVDMediaInfo()

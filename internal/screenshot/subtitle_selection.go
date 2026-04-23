@@ -46,7 +46,7 @@ func (r *screenshotRunner) chooseSubtitle() error {
 
 // preloadDVDMediaInfo 会在 DVD 场景下提前读取 mediainfo，并输出对应阶段进度避免前端长时间停在等待状态。
 func (r *screenshotRunner) preloadDVDMediaInfo() {
-	if r == nil || !looksLikeDVDSource(r.dvdProbeSource()) || r.hasDVDMediaInfoResult || strings.TrimSpace(r.mediainfoBin) == "" {
+	if r == nil || !looksLikeDVDSource(r.dvdProbeSource()) || r.subtitleState.HasDVDMediaInfoResult || strings.TrimSpace(r.tools.MediaInfoBin) == "" {
 		return
 	}
 
@@ -157,7 +157,7 @@ func (r *screenshotRunner) prepareTextSubtitleRenderSource() error {
 		return fmt.Errorf("failed to extract internal text subtitle: %w", err)
 	}
 
-	r.tempSubtitleFile = tempPath
+	r.subtitleState.TempSubtitleFile = tempPath
 	r.subtitle.Mode = "external"
 	r.subtitle.File = tempPath
 	r.subtitle.Codec = extractedCodec
@@ -296,10 +296,10 @@ func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, erro
 	blurayMode := "none"
 	dvdMediaInfoTracks := make([]dvdMediaInfoTrack, 0)
 	dvdMediaInfoResult := dvdMediaInfoResult{}
-	currentPlaylist := r.blurayContext.Playlist
+	currentPlaylist := r.subtitleState.BlurayContext.Playlist
 
 	if looksLikeDVDSource(r.dvdProbeSource()) {
-		if !r.hasDVDMediaInfoResult {
+		if !r.subtitleState.HasDVDMediaInfoResult {
 			r.logProgress("字幕", 1, 3, "正在读取 DVD MediaInfo 字幕元数据。")
 		}
 		if result, ok := r.probeDVDMediaInfo(); ok {
@@ -325,9 +325,9 @@ func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, erro
 		return subtitleSelection{}, false, nil
 	}
 
-	if r.blurayContext.Root != "" && r.blurayContext.Playlist != "" {
-		r.logProgress("字幕", 2, 3, fmt.Sprintf("正在补充蓝光字幕元数据：playlist %s。", r.blurayContext.Playlist))
-		if result, tracks, ok := r.probeBlurayHelper(r.blurayContext.Playlist, ""); ok {
+	if r.subtitleState.BlurayContext.Root != "" && r.subtitleState.BlurayContext.Playlist != "" {
+		r.logProgress("字幕", 2, 3, fmt.Sprintf("正在补充蓝光字幕元数据：playlist %s。", r.subtitleState.BlurayContext.Playlist))
+		if result, tracks, ok := r.probeBlurayHelper(r.subtitleState.BlurayContext.Playlist, ""); ok {
 			helperResult = result
 			helperTracks = tracks
 			if !helperTracksHaveClassifiedLang(helperTracks) {
@@ -340,7 +340,7 @@ func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, erro
 						continue
 					}
 					if helperTracksHaveClassifiedLang(altTracks) {
-						r.blurayContext.Playlist = playlist
+						r.subtitleState.BlurayContext.Playlist = playlist
 						helperResult = result
 						helperTracks = altTracks
 						r.logf("[信息] 首选 playlist %s 未识别出中英字幕语言，改用候选 playlist %s。", currentPlaylist, playlist)
@@ -350,30 +350,30 @@ func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, erro
 			}
 			blurayMode = "helper"
 			r.logf("[信息] 原盘选轨改用 bdsub（BDInfo-style MPLS/CLPI）字幕元数据：%s / playlist %s / clip %s",
-				r.blurayContext.Root,
-				r.blurayContext.Playlist,
-				r.blurayContext.Clip,
+				r.subtitleState.BlurayContext.Root,
+				r.subtitleState.BlurayContext.Playlist,
+				r.subtitleState.BlurayContext.Clip,
 			)
 			if blurayHelperNeedsFFprobe(rawTracks, helperTracks) {
-				r.logProgress("字幕", 2, 3, fmt.Sprintf("正在用 ffprobe 补充蓝光字幕元数据：playlist %s。", r.blurayContext.Playlist))
-				if result, ok := r.probeBlurayFFprobe(r.blurayContext.Playlist); ok && len(result) == len(rawTracks) && len(result) > 0 {
+				r.logProgress("字幕", 2, 3, fmt.Sprintf("正在用 ffprobe 补充蓝光字幕元数据：playlist %s。", r.subtitleState.BlurayContext.Playlist))
+				if result, ok := r.probeBlurayFFprobe(r.subtitleState.BlurayContext.Playlist); ok && len(result) == len(rawTracks) && len(result) > 0 {
 					blurayTracks = result
 					blurayMode = "helper+ffprobe"
 					r.logf("[信息] bdsub 字幕元数据不足，继续调用 ffprobe bluray playlist 补充：bluray:%s -playlist %s",
-						r.blurayContext.Root,
-						r.blurayContext.Playlist,
+						r.subtitleState.BlurayContext.Root,
+						r.subtitleState.BlurayContext.Playlist,
 					)
 				} else {
 					r.logf("[提示] bdsub 字幕元数据不足，但 ffprobe bluray playlist 未能补充更多字幕信息。")
 				}
 			}
 			if blurayHelperNeedsPayloadScan(rawTracks, helperResult, helperTracks, blurayTracks, blurayMode) {
-				r.logProgress("字幕", 2, 3, fmt.Sprintf("正在补充蓝光字幕 payload 元数据：playlist %s。", r.blurayContext.Playlist))
+				r.logProgress("字幕", 2, 3, fmt.Sprintf("正在补充蓝光字幕 payload 元数据：playlist %s。", r.subtitleState.BlurayContext.Playlist))
 				r.logf("[信息] 检测到同语言 PGS 候选，开始补充 payload_bytes 用于热路径密度排序：playlist %s / clip %s",
-					r.blurayContext.Playlist,
-					r.blurayContext.Clip,
+					r.subtitleState.BlurayContext.Playlist,
+					r.subtitleState.BlurayContext.Clip,
 				)
-				if result, tracks, ok := r.probeBlurayHelper(r.blurayContext.Playlist, "payload"); ok {
+				if result, tracks, ok := r.probeBlurayHelper(r.subtitleState.BlurayContext.Playlist, "payload"); ok {
 					helperResult = result
 					helperTracks = tracks
 				} else {
@@ -383,8 +383,8 @@ func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, erro
 		}
 
 		if blurayMode == "none" {
-			r.logProgress("字幕", 2, 3, fmt.Sprintf("正在用 ffprobe 探测蓝光字幕：playlist %s。", r.blurayContext.Playlist))
-			if result, ok := r.probeBlurayFFprobe(r.blurayContext.Playlist); ok && len(result) == len(rawTracks) && len(result) > 0 {
+			r.logProgress("字幕", 2, 3, fmt.Sprintf("正在用 ffprobe 探测蓝光字幕：playlist %s。", r.subtitleState.BlurayContext.Playlist))
+			if result, ok := r.probeBlurayFFprobe(r.subtitleState.BlurayContext.Playlist); ok && len(result) == len(rawTracks) && len(result) > 0 {
 				blurayTracks = result
 				if !tracksHaveClassifiedLang(blurayTracks) {
 					for _, playlist := range r.listBlurayPlaylistsRanked() {
@@ -396,7 +396,7 @@ func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, erro
 							continue
 						}
 						if tracksHaveClassifiedLang(altTracks) {
-							r.blurayContext.Playlist = playlist
+							r.subtitleState.BlurayContext.Playlist = playlist
 							blurayTracks = altTracks
 							r.logf("[信息] 首选 playlist %s 未识别出中英字幕语言，改用候选 playlist %s。", currentPlaylist, playlist)
 							break
@@ -404,7 +404,7 @@ func (r *screenshotRunner) pickInternalSubtitle() (subtitleSelection, bool, erro
 					}
 				}
 				blurayMode = "ffprobe"
-				r.logf("[信息] 原盘选轨回退到 ffprobe bluray playlist 字幕元数据：bluray:%s -playlist %s", r.blurayContext.Root, r.blurayContext.Playlist)
+				r.logf("[信息] 原盘选轨回退到 ffprobe bluray playlist 字幕元数据：bluray:%s -playlist %s", r.subtitleState.BlurayContext.Root, r.subtitleState.BlurayContext.Playlist)
 			}
 		}
 	}
@@ -611,7 +611,7 @@ func (r *screenshotRunner) prepareBlurayProbeContext() {
 		return
 	}
 
-	r.blurayContext = blurayProbeContext{
+	r.subtitleState.BlurayContext = blurayProbeContext{
 		Root:     root,
 		Playlist: playlists[0],
 		Clip:     clip,
@@ -625,10 +625,10 @@ func (r *screenshotRunner) prepareBlurayProbeContext() {
 
 // listBlurayPlaylistsRanked 会列出蓝光PlaylistsRanked，并按当前规则返回排序后的结果列表。
 func (r *screenshotRunner) listBlurayPlaylistsRanked() []string {
-	if r.blurayContext.Root == "" || r.blurayContext.Clip == "" {
+	if r.subtitleState.BlurayContext.Root == "" || r.subtitleState.BlurayContext.Clip == "" {
 		return nil
 	}
-	playlists := listBlurayPlaylistsRanked(r.blurayContext.Root, r.blurayContext.Clip)
+	playlists := listBlurayPlaylistsRanked(r.subtitleState.BlurayContext.Root, r.subtitleState.BlurayContext.Clip)
 	if len(playlists) > playlistScanMax+1 {
 		playlists = playlists[:playlistScanMax+1]
 	}
@@ -637,18 +637,18 @@ func (r *screenshotRunner) listBlurayPlaylistsRanked() []string {
 
 // probeBlurayHelper 调用 bdsub 探测当前蓝光 playlist 的字幕元数据；必要时再补充 payload_bytes 或 exact bitrate。
 func (r *screenshotRunner) probeBlurayHelper(playlist string, scanMode string) (blurayHelperResult, []blurayHelperTrack, bool) {
-	if r.bdsubBin == "" || r.blurayContext.Root == "" || r.blurayContext.Clip == "" {
+	if r.tools.BDSubBin == "" || r.subtitleState.BlurayContext.Root == "" || r.subtitleState.BlurayContext.Clip == "" {
 		return blurayHelperResult{}, nil, false
 	}
 
-	args := []string{r.blurayContext.Root, "--playlist", playlist, "--clip", r.blurayContext.Clip}
+	args := []string{r.subtitleState.BlurayContext.Root, "--playlist", playlist, "--clip", r.subtitleState.BlurayContext.Clip}
 	switch scanMode {
 	case "payload":
 		args = append(args, "--scan-payload")
 	case "bitrate":
 		args = append(args, "--scan-bitrate")
 	}
-	stdout, stderr, err := system.RunCommandLive(r.ctx, r.bdsubBin, func(stream, line string) {
+	stdout, stderr, err := system.RunCommandLive(r.ctx, r.tools.BDSubBin, func(stream, line string) {
 		if stream != "stderr" {
 			return
 		}
@@ -682,21 +682,21 @@ func (r *screenshotRunner) probeBlurayHelper(playlist string, scanMode string) (
 
 	switch scanMode {
 	case "payload":
-		r.logf("[信息] 已调用 bdsub（metadata+payload）：%s / playlist %s / clip %s", r.blurayContext.Root, playlist, r.blurayContext.Clip)
+		r.logf("[信息] 已调用 bdsub（metadata+payload）：%s / playlist %s / clip %s", r.subtitleState.BlurayContext.Root, playlist, r.subtitleState.BlurayContext.Clip)
 	case "bitrate":
-		r.logf("[信息] 已调用 bdsub（metadata+bitrate）：%s / playlist %s / clip %s", r.blurayContext.Root, playlist, r.blurayContext.Clip)
+		r.logf("[信息] 已调用 bdsub（metadata+bitrate）：%s / playlist %s / clip %s", r.subtitleState.BlurayContext.Root, playlist, r.subtitleState.BlurayContext.Clip)
 	default:
-		r.logf("[信息] 已调用 bdsub（metadata-only）：%s / playlist %s / clip %s", r.blurayContext.Root, playlist, r.blurayContext.Clip)
+		r.logf("[信息] 已调用 bdsub（metadata-only）：%s / playlist %s / clip %s", r.subtitleState.BlurayContext.Root, playlist, r.subtitleState.BlurayContext.Clip)
 	}
 	return result, result.Clip.PGStreams, true
 }
 
 // probeBlurayFFprobe 使用 bluray: 输入和 playlist 参数补充字幕轨元数据。
 func (r *screenshotRunner) probeBlurayFFprobe(playlist string) ([]subtitleTrack, bool) {
-	if r.blurayContext.Root == "" {
+	if r.subtitleState.BlurayContext.Root == "" {
 		return nil, false
 	}
-	tracks, err := r.probeSubtitleTracks("bluray:"+r.blurayContext.Root, "-playlist", playlist)
+	tracks, err := r.probeSubtitleTracks("bluray:"+r.subtitleState.BlurayContext.Root, "-playlist", playlist)
 	if err != nil || len(tracks) == 0 {
 		return nil, false
 	}
@@ -705,7 +705,7 @@ func (r *screenshotRunner) probeBlurayFFprobe(playlist string) ([]subtitleTrack,
 
 // probeDVDMediaInfo 在可用时加载 DVD 的 MediaInfo 字幕元数据。
 func (r *screenshotRunner) probeDVDMediaInfo() (dvdMediaInfoResult, bool) {
-	if strings.TrimSpace(r.mediainfoBin) == "" {
+	if strings.TrimSpace(r.tools.MediaInfoBin) == "" {
 		return dvdMediaInfoResult{}, false
 	}
 
@@ -873,7 +873,7 @@ func (r *screenshotRunner) logInternalSubtitleTracks(raw []subtitleTrack, helper
 
 // resolveRelativeSubtitleIndex 把 ffprobe 的绝对流索引转换成 ffmpeg 需要的相对字幕序号。
 func (r *screenshotRunner) resolveRelativeSubtitleIndex(input string, streamIndex int) (int, error) {
-	stdout, stderr, err := system.RunCommand(r.ctx, r.ffprobeBin,
+	stdout, stderr, err := system.RunCommand(r.ctx, r.tools.FFprobeBin,
 		"-v", "error",
 		"-select_streams", "s",
 		"-show_entries", "stream=index",
@@ -918,7 +918,7 @@ func (r *screenshotRunner) probeSubtitleTracks(input string, extraArgs ...string
 		input,
 	)
 
-	stdout, stderr, err := system.RunCommand(r.ctx, r.ffprobeBin, args...)
+	stdout, stderr, err := system.RunCommand(r.ctx, r.tools.FFprobeBin, args...)
 	if err != nil {
 		return nil, fmt.Errorf(system.BestErrorMessage(err, stderr, stdout))
 	}
@@ -978,7 +978,7 @@ func (r *screenshotRunner) logSelectedSubtitleSummary() {
 		source = "内封"
 		render = "直接使用内封轨道"
 	}
-	if strings.TrimSpace(r.subtitleFontDir) != "" {
+	if strings.TrimSpace(r.subtitleState.SubtitleFontDir) != "" {
 		render += "（优先使用 MKV 附件字体）"
 	}
 

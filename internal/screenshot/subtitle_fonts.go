@@ -40,7 +40,7 @@ func (r *screenshotRunner) prepareEmbeddedSubtitleFonts() {
 		return
 	}
 
-	stdout, stderr, err := system.RunCommandInDir(r.ctx, fontDir, r.ffmpegBin, buildEmbeddedFontExtractionArgs(r.sourcePath)...)
+	stdout, stderr, err := system.RunCommandInDir(r.ctx, fontDir, r.tools.FFmpegBin, buildEmbeddedFontExtractionArgs(r.sourcePath)...)
 	if err != nil {
 		_ = os.RemoveAll(fontDir)
 		r.logf("[提示] MKV 内封字体提取失败，将回退系统字体：%s", system.BestErrorMessage(err, stderr, stdout))
@@ -53,7 +53,7 @@ func (r *screenshotRunner) prepareEmbeddedSubtitleFonts() {
 		return
 	}
 
-	r.subtitleFontDir = fontDir
+	r.subtitleState.SubtitleFontDir = fontDir
 	r.logf("[信息] 检测到 MKV 内封字体 %d 个，截图渲染将优先使用附件字体：%s",
 		len(attachments),
 		summarizeSubtitleFontAttachments(attachments),
@@ -92,7 +92,7 @@ func (r *screenshotRunner) probeEmbeddedFontAttachments() ([]subtitleFontAttachm
 		r.sourcePath,
 	}
 
-	stdout, stderr, err := system.RunCommand(r.ctx, r.ffprobeBin, args...)
+	stdout, stderr, err := system.RunCommand(r.ctx, r.tools.FFprobeBin, args...)
 	if err != nil {
 		return nil, fmt.Errorf(system.BestErrorMessage(err, stderr, stdout))
 	}

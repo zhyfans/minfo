@@ -48,9 +48,9 @@ func (r *screenshotRunner) uniqueAlignedCandidatesFromSubtitleIndex(requested fl
 		second   int
 	}
 
-	candidates := make([]secondCandidate, 0, len(r.subtitleIndex))
-	seen := make(map[int]struct{}, len(r.subtitleIndex))
-	for _, span := range r.subtitleIndex {
+	candidates := make([]secondCandidate, 0, len(r.subtitleState.Index))
+	seen := make(map[int]struct{}, len(r.subtitleState.Index))
+	for _, span := range r.subtitleState.Index {
 		startSecond := screenshotSecond(span.Start)
 		endSecond := screenshotSecond(span.End)
 		for second := startSecond; second <= endSecond; second++ {
@@ -97,7 +97,7 @@ func (r *screenshotRunner) detectStartOffset() float64 {
 
 // detectStartOffsetForInput 读取指定输入的起始时间偏移。
 func (r *screenshotRunner) detectStartOffsetForInput(input string) float64 {
-	stdout, _, err := system.RunCommand(r.ctx, r.ffprobeBin,
+	stdout, _, err := system.RunCommand(r.ctx, r.tools.FFprobeBin,
 		"-v", "error",
 		"-select_streams", "v:0",
 		"-show_entries", "stream=start_time",
@@ -110,7 +110,7 @@ func (r *screenshotRunner) detectStartOffsetForInput(input string) float64 {
 		}
 	}
 
-	stdout, _, err = system.RunCommand(r.ctx, r.ffprobeBin,
+	stdout, _, err = system.RunCommand(r.ctx, r.tools.FFprobeBin,
 		"-v", "error",
 		"-show_entries", "format=start_time",
 		"-of", "default=noprint_wrappers=1:nokey=1",
@@ -126,7 +126,7 @@ func (r *screenshotRunner) detectStartOffsetForInput(input string) float64 {
 
 // detectVideoDimensions 读取当前视频流的宽高。
 func (r *screenshotRunner) detectVideoDimensions() (int, int) {
-	stdout, _, err := system.RunCommand(r.ctx, r.ffprobeBin,
+	stdout, _, err := system.RunCommand(r.ctx, r.tools.FFprobeBin,
 		"-v", "error",
 		"-select_streams", "v:0",
 		"-show_entries", "stream=width,height",
@@ -157,7 +157,7 @@ func (r *screenshotRunner) detectBitmapSubtitleCanvasDimensions() (int, int) {
 		return 0, 0
 	}
 
-	stdout, _, err := system.RunCommand(r.ctx, r.ffprobeBin,
+	stdout, _, err := system.RunCommand(r.ctx, r.tools.FFprobeBin,
 		"-v", "error",
 		"-select_streams", fmt.Sprintf("s:%d", r.subtitle.RelativeIndex),
 		"-show_entries", "stream=width,height",
@@ -184,7 +184,7 @@ func (r *screenshotRunner) detectBitmapSubtitleCanvasDimensions() (int, int) {
 
 // detectColorspace 读取视频流的色彩空间元数据，并整理成稳定键值。
 func (r *screenshotRunner) detectColorspace() string {
-	stdout, _, err := system.RunCommand(r.ctx, r.ffprobeBin,
+	stdout, _, err := system.RunCommand(r.ctx, r.tools.FFprobeBin,
 		"-v", "error",
 		"-select_streams", "v:0",
 		"-show_entries", "stream=color_space,color_primaries,color_transfer:stream_side_data=side_data_type,dv_profile",
@@ -197,7 +197,7 @@ func (r *screenshotRunner) detectColorspace() string {
 		}
 	}
 
-	stdout, _, err = system.RunCommand(r.ctx, r.ffprobeBin,
+	stdout, _, err = system.RunCommand(r.ctx, r.tools.FFprobeBin,
 		"-v", "error",
 		"-select_streams", "v:0",
 		"-show_entries", "stream=color_space,color_primaries,color_transfer",
@@ -338,7 +338,7 @@ func buildDisplayAspectFilter() string {
 
 // detectDisplayGeometry 读取视频流的 SAR/DAR 元数据，并构建更适合静态截图的比例修正链和输出尺寸。
 func (r *screenshotRunner) detectDisplayGeometry() (string, int, int) {
-	stdout, _, err := system.RunCommand(r.ctx, r.ffprobeBin,
+	stdout, _, err := system.RunCommand(r.ctx, r.tools.FFprobeBin,
 		"-v", "error",
 		"-select_streams", "v:0",
 		"-show_entries", "stream=width,height,sample_aspect_ratio,display_aspect_ratio",
@@ -346,7 +346,7 @@ func (r *screenshotRunner) detectDisplayGeometry() (string, int, int) {
 		r.sourcePath,
 	)
 	if err != nil {
-		return buildDisplayAspectFilter(), r.videoWidth, r.videoHeight
+		return buildDisplayAspectFilter(), r.media.VideoWidth, r.media.VideoHeight
 	}
 
 	width := 0
@@ -369,8 +369,8 @@ func (r *screenshotRunner) detectDisplayGeometry() (string, int, int) {
 
 	if looksLikeDVDSource(r.dvdProbeSource()) {
 		mediainfoDAR := ""
-		if r.hasDVDMediaInfoResult {
-			mediainfoDAR = strings.TrimSpace(r.dvdMediaInfoResult.DisplayAspectRatio)
+		if r.subtitleState.HasDVDMediaInfoResult {
+			mediainfoDAR = strings.TrimSpace(r.subtitleState.DVDMediaInfoResult.DisplayAspectRatio)
 		}
 		r.logf("[信息] DVD 比例探测：ffprobe width=%d height=%d sar=%s dar=%s | mediainfo dar=%s",
 			width,
@@ -393,7 +393,7 @@ func (r *screenshotRunner) detectDisplayGeometry() (string, int, int) {
 
 // detectDVDDisplayAspectFilterFromMediaInfo 会从 mediainfo 结果中提取 DVD 比例修正所需参数。
 func (r *screenshotRunner) detectDVDDisplayAspectFilterFromMediaInfo(width, height int) (int, int, string, bool) {
-	if r == nil || !r.hasDVDMediaInfoResult {
+	if r == nil || !r.subtitleState.HasDVDMediaInfoResult {
 		return 0, 0, "", false
 	}
 	if !looksLikeDVDSource(r.dvdProbeSource()) {
@@ -402,10 +402,10 @@ func (r *screenshotRunner) detectDVDDisplayAspectFilterFromMediaInfo(width, heig
 	if width <= 0 || height <= 0 {
 		return 0, 0, "", false
 	}
-	if strings.TrimSpace(r.dvdMediaInfoResult.DisplayAspectRatio) == "" {
+	if strings.TrimSpace(r.subtitleState.DVDMediaInfoResult.DisplayAspectRatio) == "" {
 		return 0, 0, "", false
 	}
-	return width, height, r.dvdMediaInfoResult.DisplayAspectRatio, true
+	return width, height, r.subtitleState.DVDMediaInfoResult.DisplayAspectRatio, true
 }
 
 // buildDisplayAspectFilterForMetadata 根据视频宽高和宽高比元数据生成静态截图所需的比例修正链。
@@ -588,7 +588,7 @@ func (r *screenshotRunner) logAlignedSubtitleIndexCandidate(requested, candidate
 func (r *screenshotRunner) acceptBitmapSubtitleCandidate(label string, candidate float64) (float64, bool) {
 	candidate = r.clampToDuration(candidate)
 	key := bitmapCandidateKey(candidate)
-	if _, rejected := r.rejectedBitmapCandidates[key]; rejected {
+	if _, rejected := r.subtitleState.RejectedBitmapCandidates[key]; rejected {
 		return 0, false
 	}
 
@@ -608,7 +608,7 @@ func (r *screenshotRunner) acceptBitmapSubtitleCandidate(label string, candidate
 			if longBack > shortBack {
 				longVisible, longErr := r.internalBitmapSubtitleVisibleAtWithCoarseBack(candidate, longBack)
 				if longErr == nil && longVisible {
-					r.bitmapRenderBackOverride = longBack
+					r.subtitleState.BitmapRenderBackOverride = longBack
 					r.logf("[提示] %s候选仅在较大回溯窗口下渲染出字幕，后续位图截图改用 %ds 回溯窗口：%s",
 						label,
 						longBack,
@@ -618,10 +618,10 @@ func (r *screenshotRunner) acceptBitmapSubtitleCandidate(label string, candidate
 				}
 			}
 		}
-		if r.rejectedBitmapCandidates == nil {
-			r.rejectedBitmapCandidates = make(map[string]struct{})
+		if r.subtitleState.RejectedBitmapCandidates == nil {
+			r.subtitleState.RejectedBitmapCandidates = make(map[string]struct{})
 		}
-		r.rejectedBitmapCandidates[key] = struct{}{}
+		r.subtitleState.RejectedBitmapCandidates[key] = struct{}{}
 		r.logf("[提示] %s候选未实际渲染出字幕，继续搜索：%s",
 			label,
 			secToHMSMS(candidate),
@@ -637,7 +637,7 @@ func (r *screenshotRunner) findNearestVisibleBitmapIndexedCandidate(requested fl
 		return 0, false
 	}
 
-	spans := append([]subtitleSpan(nil), r.subtitleIndex...)
+	spans := append([]subtitleSpan(nil), r.subtitleState.Index...)
 	sort.Slice(spans, func(i, j int) bool {
 		left := math.Abs(bitmapSnapPoint(spans[i], subtitleSnapEpsilon) - requested)
 		right := math.Abs(bitmapSnapPoint(spans[j], subtitleSnapEpsilon) - requested)
@@ -729,8 +729,8 @@ func (r *screenshotRunner) ensureSubtitleIndex() []subtitleSpan {
 	if r == nil {
 		return nil
 	}
-	if r.subtitleIndexBuilt {
-		return r.subtitleIndex
+	if r.subtitleState.IndexBuilt {
+		return r.subtitleState.Index
 	}
 
 	stopHeartbeat := func() {}
@@ -742,13 +742,13 @@ func (r *screenshotRunner) ensureSubtitleIndex() []subtitleSpan {
 		}
 	}
 
-	r.subtitleIndex = r.buildSubtitleIndex()
+	r.subtitleState.Index = r.buildSubtitleIndex()
 	stopHeartbeat()
 	if r.shouldEmitSubtitleIndexProgress() {
 		r.logProgressPercent("字幕", 100, "全片字幕索引准备完成。")
 	}
-	r.subtitleIndexBuilt = true
-	return r.subtitleIndex
+	r.subtitleState.IndexBuilt = true
+	return r.subtitleState.Index
 }
 
 // probeSupportedBitmapSpans 根据字幕类型分派到对应的位图字幕区间探测逻辑。
@@ -833,7 +833,7 @@ func (r *screenshotRunner) probePacketSpans(args []string, internal bool, bitmap
 	spans := make([]subtitleSpan, 0, 256)
 	progress := newSubtitleIndexProgressEmitter(r, internal, startAbs, duration)
 
-	stdout, stderr, err := system.RunCommandLive(r.ctx, r.ffprobeBin, func(stream, line string) {
+	stdout, stderr, err := system.RunCommandLive(r.ctx, r.tools.FFprobeBin, func(stream, line string) {
 		if stream != "stdout" {
 			return
 		}
@@ -842,7 +842,7 @@ func (r *screenshotRunner) probePacketSpans(args []string, internal bool, bitmap
 			return
 		}
 		progress.observe(packet)
-		spans = appendPacketSpan(spans, packet, internal, bitmapMinSize, r.startOffset)
+		spans = appendPacketSpan(spans, packet, internal, bitmapMinSize, r.media.StartOffset)
 	}, args...)
 	if err != nil {
 		return nil, fmt.Errorf(system.BestErrorMessage(err, stderr, stdout))
@@ -897,7 +897,7 @@ func appendPacketSpan(spans []subtitleSpan, packet ffprobePacket, internal bool,
 
 // canApproximateSubtitleIndexScanProgress 会判断当前是否具备按时长估算索引进度的条件。
 func (r *screenshotRunner) canApproximateSubtitleIndexScanProgress() bool {
-	return r != nil && r.duration > 0
+	return r != nil && r.media.Duration > 0
 }
 
 type subtitleIndexProgressEmitter struct {
@@ -921,7 +921,7 @@ func newSubtitleIndexProgressEmitter(r *screenshotRunner, internal bool, startAb
 	if r == nil || !r.shouldEmitSubtitleIndexProgress() {
 		return emitter
 	}
-	if startAbs >= 0 || duration > 0 || r.subtitleIndexBuilt {
+	if startAbs >= 0 || duration > 0 || r.subtitleState.IndexBuilt {
 		return emitter
 	}
 	if !r.canApproximateSubtitleIndexScanProgress() {
@@ -930,11 +930,11 @@ func newSubtitleIndexProgressEmitter(r *screenshotRunner, internal bool, startAb
 
 	scanStart := 0.0
 	if internal {
-		scanStart = math.Max(r.startOffset, 0)
+		scanStart = math.Max(r.media.StartOffset, 0)
 	}
 	emitter.baseDetail = r.subtitleIndexProgressDetail()
 	emitter.scanStart = scanStart
-	emitter.scanTotal = r.duration
+	emitter.scanTotal = r.media.Duration
 	emitter.maxPTS = scanStart
 	emitter.enabled = emitter.scanTotal > 0
 	return emitter
@@ -1090,8 +1090,8 @@ func (r *screenshotRunner) clampToDuration(value float64) float64 {
 	if value < 0 {
 		return 0
 	}
-	if r.duration > 0 && value > r.duration {
-		return r.duration
+	if r.media.Duration > 0 && value > r.media.Duration {
+		return r.media.Duration
 	}
 	return value
 }

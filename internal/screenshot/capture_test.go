@@ -12,9 +12,11 @@ import (
 // TestBuildTextSubtitleFilterForInternalTextSubtitle 验证内封文字字幕过滤器会保持与 shell 一致的 si 写法。
 func TestBuildTextSubtitleFilterForInternalTextSubtitle(t *testing.T) {
 	runner := &screenshotRunner{
-		sourcePath:  "/media/example/video.mkv",
-		videoWidth:  1920,
-		videoHeight: 1080,
+		sourcePath: "/media/example/video.mkv",
+		media: runtimeMediaState{
+			VideoWidth:  1920,
+			VideoHeight: 1080,
+		},
 		subtitle: subtitleSelection{
 			Mode:          "internal",
 			RelativeIndex: 1,
@@ -36,8 +38,10 @@ func TestBuildTextSubtitleFilterForInternalTextSubtitle(t *testing.T) {
 // TestBuildTextSubtitleFilterForExternalSubtitle 验证外挂文字字幕过滤器也会保持 shell 的位置参数写法。
 func TestBuildTextSubtitleFilterForExternalSubtitle(t *testing.T) {
 	runner := &screenshotRunner{
-		videoWidth:  1280,
-		videoHeight: 720,
+		media: runtimeMediaState{
+			VideoWidth:  1280,
+			VideoHeight: 720,
+		},
 		subtitle: subtitleSelection{
 			Mode: "external",
 			File: "/media/example/subtitle.srt",
@@ -55,10 +59,14 @@ func TestBuildTextSubtitleFilterForExternalSubtitle(t *testing.T) {
 
 func TestBuildTextSubtitleFilterIncludesFontsDirWhenPrepared(t *testing.T) {
 	runner := &screenshotRunner{
-		sourcePath:      "/media/example/video.mkv",
-		videoWidth:      1920,
-		videoHeight:     1080,
-		subtitleFontDir: "/tmp/minfo-sub-fonts-123",
+		sourcePath: "/media/example/video.mkv",
+		media: runtimeMediaState{
+			VideoWidth:  1920,
+			VideoHeight: 1080,
+		},
+		subtitleState: runtimeSubtitleState{
+			SubtitleFontDir: "/tmp/minfo-sub-fonts-123",
+		},
 		subtitle: subtitleSelection{
 			Mode:          "internal",
 			RelativeIndex: 1,
@@ -73,12 +81,16 @@ func TestBuildTextSubtitleFilterIncludesFontsDirWhenPrepared(t *testing.T) {
 
 func TestBuildPGSRenderFilterComplexAppliesVideoProcessingBeforeOverlay(t *testing.T) {
 	runner := &screenshotRunner{
-		colorChain:           "libplacebo=colorspace=gbr",
-		aspectChain:          "setsar=1",
-		displayWidth:         3840,
-		displayHeight:        2160,
-		subtitleCanvasWidth:  1920,
-		subtitleCanvasHeight: 1080,
+		media: runtimeMediaState{
+			DisplayWidth:  3840,
+			DisplayHeight: 2160,
+		},
+		render: runtimeRenderState{
+			ColorChain:           "libplacebo=colorspace=gbr",
+			AspectChain:          "setsar=1",
+			SubtitleCanvasWidth:  1920,
+			SubtitleCanvasHeight: 1080,
+		},
 		subtitle: subtitleSelection{
 			Mode:          "internal",
 			RelativeIndex: 2,
@@ -100,7 +112,9 @@ func TestBuildPGSRenderFilterComplexAppliesVideoProcessingBeforeOverlay(t *testi
 
 func TestBuildPGSRenderFilterComplexFallsBackWhenCanvasUnknown(t *testing.T) {
 	runner := &screenshotRunner{
-		aspectChain: "setsar=1",
+		render: runtimeRenderState{
+			AspectChain: "setsar=1",
+		},
 		subtitle: subtitleSelection{
 			Mode:          "internal",
 			RelativeIndex: 1,
@@ -170,11 +184,13 @@ func TestRenderCoarseBackUsesBitmapOverrideWhenPresent(t *testing.T) {
 			CoarseBackText: 3,
 			RenderBackText: 1,
 		},
+		subtitleState: runtimeSubtitleState{
+			BitmapRenderBackOverride: 12,
+		},
 		subtitle: subtitleSelection{
 			Mode:  "internal",
 			Codec: "hdmv_pgs_subtitle",
 		},
-		bitmapRenderBackOverride: 12,
 	}
 
 	if got := runner.renderCoarseBack(); got != 12 {
@@ -184,7 +200,9 @@ func TestRenderCoarseBackUsesBitmapOverrideWhenPresent(t *testing.T) {
 
 func TestBuildTextSubtitleRenderChainUsesTimelineBaseAndSelect(t *testing.T) {
 	runner := &screenshotRunner{
-		aspectChain: "setsar=1",
+		render: runtimeRenderState{
+			AspectChain: "setsar=1",
+		},
 	}
 
 	filter := runner.buildTextSubtitleRenderChain(60, 61, "subtitles='/media/example/video.mkv':original_size=3840x2160:si=1")
@@ -197,8 +215,10 @@ func TestBuildTextSubtitleRenderChainUsesTimelineBaseAndSelect(t *testing.T) {
 
 func TestBuildTextSubtitleRenderChainUsesLibplaceboBeforeSubtitles(t *testing.T) {
 	runner := &screenshotRunner{
-		colorChain:  "libplacebo=colorspace=gbr",
-		aspectChain: "setsar=1",
+		render: runtimeRenderState{
+			ColorChain:  "libplacebo=colorspace=gbr",
+			AspectChain: "setsar=1",
+		},
 	}
 
 	filter := runner.buildTextSubtitleRenderChain(60, 61, "subtitles='/media/example/video.mkv':original_size=3840x2160:si=1")
@@ -225,23 +245,27 @@ func TestIsLibplaceboRenderCrashMessage(t *testing.T) {
 
 func TestApplyLibplaceboRenderFallbackSwitchesToCompatibleChain(t *testing.T) {
 	runner := &screenshotRunner{
-		libplaceboReady: true,
-		colorInfo:       "color_primaries=bt2020|color_space=bt2020nc|color_transfer=smpte2084|",
-		colorChain:      "libplacebo=colorspace=gbr",
+		tools: runtimeToolchain{
+			LibplaceboReady: true,
+		},
+		render: runtimeRenderState{
+			ColorInfo:  "color_primaries=bt2020|color_space=bt2020nc|color_transfer=smpte2084|",
+			ColorChain: "libplacebo=colorspace=gbr",
+		},
 	}
 
 	changed := runner.applyLibplaceboRenderFallback(fmt.Errorf("LLVM ERROR: Cannot select: ..."))
 	if !changed {
 		t.Fatal("expected libplacebo fallback to trigger")
 	}
-	if runner.libplaceboReady {
+	if runner.tools.LibplaceboReady {
 		t.Fatal("expected libplaceboReady to be disabled after fallback")
 	}
-	if strings.Contains(runner.colorChain, "libplacebo=") {
-		t.Fatalf("expected fallback colorspace chain to avoid libplacebo, got %q", runner.colorChain)
+	if strings.Contains(runner.render.ColorChain, "libplacebo=") {
+		t.Fatalf("expected fallback colorspace chain to avoid libplacebo, got %q", runner.render.ColorChain)
 	}
-	if !strings.Contains(runner.colorChain, "tonemap=mobius") {
-		t.Fatalf("expected fallback colorspace chain to use tonemap path, got %q", runner.colorChain)
+	if !strings.Contains(runner.render.ColorChain, "tonemap=mobius") {
+		t.Fatalf("expected fallback colorspace chain to use tonemap path, got %q", runner.render.ColorChain)
 	}
 }
 
@@ -295,7 +319,9 @@ func TestApproximateRenderProgressPercentFromElapsedFallback(t *testing.T) {
 
 func TestFFmpegSubtitleProgressPercentNormalizesFromFirstSubtitleTimestamp(t *testing.T) {
 	runner := &screenshotRunner{
-		duration: 7200,
+		media: runtimeMediaState{
+			Duration: 7200,
+		},
 	}
 	state := &ffmpegRealtimeState{
 		outTimeMS:       3_900_000_000,
@@ -312,7 +338,9 @@ func TestFFmpegSubtitleProgressPercentNormalizesFromFirstSubtitleTimestamp(t *te
 // TestFFmpegSubtitleProgressDetailUsesProcessedDuration 验证内封字幕提取进度会展示已处理时长和总时长。
 func TestFFmpegSubtitleProgressDetailUsesProcessedDuration(t *testing.T) {
 	runner := &screenshotRunner{
-		duration: 100,
+		media: runtimeMediaState{
+			Duration: 100,
+		},
 	}
 	state := &ffmpegRealtimeState{
 		outTimeMS: 50_000_000,
@@ -327,7 +355,9 @@ func TestFFmpegSubtitleProgressDetailUsesProcessedDuration(t *testing.T) {
 // TestFFmpegSubtitleProgressDetailNormalizesFromFirstSubtitleTimestamp 验证提取进度展示会与首条字幕时间戳对齐。
 func TestFFmpegSubtitleProgressDetailNormalizesFromFirstSubtitleTimestamp(t *testing.T) {
 	runner := &screenshotRunner{
-		duration: 7200,
+		media: runtimeMediaState{
+			Duration: 7200,
+		},
 	}
 	state := &ffmpegRealtimeState{
 		outTimeMS:       3_900_000_000,
@@ -343,10 +373,8 @@ func TestFFmpegSubtitleProgressDetailNormalizesFromFirstSubtitleTimestamp(t *tes
 
 // TestLogShotAlignmentProgressUsesCurrentShotIndex 验证截图对齐阶段会输出当前张数提示。
 func TestLogShotAlignmentProgressUsesCurrentShotIndex(t *testing.T) {
-	runner := &screenshotRunner{
-		activeShotIndex: 1,
-		activeShotTotal: 4,
-	}
+	runner := &screenshotRunner{}
+	runner.activeShot.Prepare(1, 4)
 
 	runner.logShotAlignmentProgress()
 
@@ -358,13 +386,12 @@ func TestLogShotAlignmentProgressUsesCurrentShotIndex(t *testing.T) {
 // TestLogBitmapSubtitleVisibilityProgressUsesBitmapKind 验证位图字幕校验阶段会输出对应字幕类型提示。
 func TestLogBitmapSubtitleVisibilityProgressUsesBitmapKind(t *testing.T) {
 	runner := &screenshotRunner{
-		activeShotIndex: 1,
-		activeShotTotal: 4,
 		subtitle: subtitleSelection{
 			Mode:  "internal",
 			Codec: "hdmv_pgs_subtitle",
 		},
 	}
+	runner.activeShot.Prepare(1, 4)
 
 	runner.logBitmapSubtitleVisibilityProgress()
 

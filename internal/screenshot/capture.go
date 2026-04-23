@@ -18,7 +18,7 @@ import (
 
 // captureScreenshot 会执行一次完整截图，并在文件过大时自动触发重编码兜底。
 func (r *screenshotRunner) captureScreenshot(aligned float64, path string) error {
-	r.activeRenderPhase = "render"
+	r.activeShot.SetPhase(activeShotPhaseRender)
 	if err := r.runRenderWithLibplaceboFallback(func() error {
 		return r.capturePrimary(aligned, path)
 	}); err != nil {
@@ -42,20 +42,20 @@ func (r *screenshotRunner) captureScreenshot(aligned float64, path string) error
 
 	r.logf("[提示] %s 大小 %.2fMB，重拍降低质量...", filepath.Base(path), sizeMB)
 	tempPath := path + ".tmp" + r.settings.Ext
-	r.activeRenderPhase = "reencode"
+	r.activeShot.SetPhase(activeShotPhaseReencode)
 	if err := r.runRenderWithLibplaceboFallback(func() error {
 		return r.captureReencoded(aligned, tempPath)
 	}); err != nil {
 		_ = os.Remove(tempPath)
 		r.logf("[警告] 重拍失败，保留原始截图：%s", err.Error())
-		r.activeRenderPhase = "render"
+		r.activeShot.SetPhase(activeShotPhaseRender)
 		return nil
 	}
 	if err := os.Rename(tempPath, path); err != nil {
 		_ = os.Remove(tempPath)
 		return err
 	}
-	r.activeRenderPhase = "render"
+	r.activeShot.SetPhase(activeShotPhaseRender)
 	return nil
 }
 
@@ -104,12 +104,12 @@ func (r *screenshotRunner) compressOversizedPNGIfNeeded(path string) {
 
 // compressOxiPNG 会调用 oxipng 对 PNG 截图执行无损压缩。
 func (r *screenshotRunner) compressOxiPNG(path string) error {
-	if strings.TrimSpace(r.oxipngBin) == "" {
+	if strings.TrimSpace(r.tools.OxiPNGBin) == "" {
 		return fmt.Errorf("%s not found", system.OxiPNGBinaryPath)
 	}
 
 	args := buildOxiPNGCompressionArgs(path)
-	stdout, stderr, err := system.RunCommand(r.ctx, r.oxipngBin, args...)
+	stdout, stderr, err := system.RunCommand(r.ctx, r.tools.OxiPNGBin, args...)
 	if err != nil {
 		return fmt.Errorf(system.BestErrorMessage(err, stderr, stdout))
 	}
@@ -118,7 +118,7 @@ func (r *screenshotRunner) compressOxiPNG(path string) error {
 
 // compressPNGQuant 会调用 pngquant 生成替换式的有损压缩 PNG。
 func (r *screenshotRunner) compressPNGQuant(path string) error {
-	if strings.TrimSpace(r.pngquantBin) == "" {
+	if strings.TrimSpace(r.tools.PNGQuantBin) == "" {
 		return fmt.Errorf("%s not found", system.PNGQuantBinaryPath)
 	}
 
@@ -126,7 +126,7 @@ func (r *screenshotRunner) compressPNGQuant(path string) error {
 	_ = os.Remove(compressedPath)
 
 	args := buildPNGQuantCompressionArgs(path, compressedPath)
-	stdout, stderr, err := system.RunCommand(r.ctx, r.pngquantBin, args...)
+	stdout, stderr, err := system.RunCommand(r.ctx, r.tools.PNGQuantBin, args...)
 	if err != nil {
 		_ = os.Remove(compressedPath)
 		return fmt.Errorf(system.BestErrorMessage(err, stderr, stdout))
@@ -279,7 +279,7 @@ func (r *screenshotRunner) captureBitmapProbeFrame(inputPath string, localTime f
 		)
 	}
 
-	stdout, stderr, err := system.RunCommand(r.ctx, r.ffmpegBin, args...)
+	stdout, stderr, err := system.RunCommand(r.ctx, r.tools.FFmpegBin, args...)
 	if err != nil {
 		return "", fmt.Errorf(system.BestErrorMessage(err, stderr, stdout))
 	}
@@ -300,7 +300,7 @@ func (r *screenshotRunner) captureDVDPrimary(coarseHMS string, fineSecond float6
 func (r *screenshotRunner) captureInternalBitmapPrimary(coarseHMS string, fineSecond float64, path string) error {
 	filterComplex := joinFilters(
 		fmt.Sprintf("[0:v:0][0:s:%d]overlay=(W-w)/2:(H-h-10)", r.subtitle.RelativeIndex),
-		r.colorChain,
+		r.render.ColorChain,
 		r.displayAspectFilter(),
 	)
 	args := []string{
@@ -393,7 +393,7 @@ func (r *screenshotRunner) capturePrimary(aligned float64, path string) error {
 		}
 	}
 
-	filterChain := joinFilters(r.colorChain, r.displayAspectFilter())
+	filterChain := joinFilters(r.render.ColorChain, r.displayAspectFilter())
 
 	if subFilter := r.buildTextSubtitleFilter(); subFilter != "" {
 		return r.captureTextSubtitleWithOutputArgs(aligned, r.primaryOutputArgs(), path)
@@ -442,7 +442,7 @@ func (r *screenshotRunner) capturePNGReencoded(aligned float64, path string) err
 		}
 	}
 
-	filterChain := joinFilters(r.colorChain, r.displayAspectFilter())
+	filterChain := joinFilters(r.render.ColorChain, r.displayAspectFilter())
 	if subFilter := r.buildTextSubtitleFilter(); subFilter != "" {
 		return r.captureTextSubtitleWithOutputArgs(aligned, []string{
 			"-c:v", "png",
@@ -489,7 +489,7 @@ func (r *screenshotRunner) captureDVDPNGReencoded(coarseHMS string, fineSecond f
 func (r *screenshotRunner) captureInternalBitmapPNGReencoded(coarseHMS string, fineSecond float64, path string) error {
 	filterComplex := joinFilters(
 		fmt.Sprintf("[0:v:0][0:s:%d]overlay=(W-w)/2:(H-h-10)", r.subtitle.RelativeIndex),
-		r.colorChain,
+		r.render.ColorChain,
 		r.displayAspectFilter(),
 	)
 	args := []string{
@@ -530,7 +530,7 @@ func (r *screenshotRunner) captureJPGReencoded(aligned float64, path string) err
 		}
 	}
 
-	filterChain := joinFilters(r.colorChain, r.displayAspectFilter())
+	filterChain := joinFilters(r.render.ColorChain, r.displayAspectFilter())
 	if subFilter := r.buildTextSubtitleFilter(); subFilter != "" {
 		return r.captureTextSubtitleWithOutputArgs(aligned, []string{
 			"-c:v", "mjpeg",
@@ -574,7 +574,7 @@ func (r *screenshotRunner) captureDVDJPGReencoded(coarseHMS string, fineSecond f
 func (r *screenshotRunner) captureInternalBitmapJPGReencoded(coarseHMS string, fineSecond float64, quality int, path string) error {
 	filterComplex := joinFilters(
 		fmt.Sprintf("[0:v:0][0:s:%d]overlay=(W-w)/2:(H-h-10)", r.subtitle.RelativeIndex),
-		r.colorChain,
+		r.render.ColorChain,
 		r.displayAspectFilter(),
 	)
 	args := []string{
@@ -645,7 +645,7 @@ func (r *screenshotRunner) runFFmpegLive(args []string, stage string, localWindo
 		)
 	}
 	ffmpegArgs = append(ffmpegArgs, args...)
-	r.logf("[ffmpeg][%s] 执行命令: %s", stage, system.FormatCommandForLog(r.ctx, r.ffmpegBin, ffmpegArgs...))
+	r.logf("[ffmpeg][%s] 执行命令: %s", stage, system.FormatCommandForLog(r.ctx, r.tools.FFmpegBin, ffmpegArgs...))
 
 	progress := ffmpegRealtimeState{
 		startedAt:     time.Now(),
@@ -672,7 +672,7 @@ func (r *screenshotRunner) runFFmpegLive(args []string, stage string, localWindo
 		}()
 	}
 
-	stdout, stderr, err := system.RunCommandLive(r.ctx, r.ffmpegBin, func(stream, line string) {
+	stdout, stderr, err := system.RunCommandLive(r.ctx, r.tools.FFmpegBin, func(stream, line string) {
 		if stream != "stdout" {
 			return
 		}
@@ -690,7 +690,7 @@ func (r *screenshotRunner) runFFmpegLive(args []string, stage string, localWindo
 
 // usesLibplaceboColorspace 会判断当前渲染链是否正在使用 libplacebo。
 func (r *screenshotRunner) usesLibplaceboColorspace() bool {
-	return r != nil && strings.Contains(r.colorChain, "libplacebo=")
+	return r != nil && strings.Contains(r.render.ColorChain, "libplacebo=")
 }
 
 // applyLibplaceboRenderFallback 会在识别到崩溃特征时切换到兼容色彩链。
@@ -702,13 +702,13 @@ func (r *screenshotRunner) applyLibplaceboRenderFallback(err error) bool {
 		return false
 	}
 
-	fallbackChain := buildColorspaceChain(r.colorInfo, false)
+	fallbackChain := buildColorspaceChain(r.render.ColorInfo, false)
 	if strings.TrimSpace(fallbackChain) == "" {
 		return false
 	}
 
-	r.libplaceboReady = false
-	r.colorChain = fallbackChain
+	r.tools.LibplaceboReady = false
+	r.render.ColorChain = fallbackChain
 	r.logf("[提示] libplacebo/Vulkan 渲染失败，自动回退到兼容色彩链后重试当前截图。")
 	return true
 }
@@ -743,8 +743,8 @@ func (r *screenshotRunner) renderCoarseBack() int {
 		return 1
 	}
 	if r.subtitle.Mode == "internal" && r.isSupportedBitmapSubtitle() {
-		if r.bitmapRenderBackOverride > 0 {
-			return r.bitmapRenderBackOverride
+		if r.subtitleState.BitmapRenderBackOverride > 0 {
+			return r.subtitleState.BitmapRenderBackOverride
 		}
 		if r.settings.RenderBackPGS > 0 {
 			return r.settings.RenderBackPGS
@@ -959,11 +959,11 @@ func (r *screenshotRunner) ffmpegSubtitleProgressDetail(state *ffmpegRealtimeSta
 
 // ffmpegSubtitleProcessedWindow 会把字幕提取实时状态换算成适合展示的已处理时长和总时长。
 func (r *screenshotRunner) ffmpegSubtitleProcessedWindow(state *ffmpegRealtimeState) (float64, float64, bool) {
-	if r == nil || state == nil || r.duration <= 0 || state.outTimeMS <= 0 {
+	if r == nil || state == nil || r.media.Duration <= 0 || state.outTimeMS <= 0 {
 		return 0, 0, false
 	}
 
-	totalSeconds := r.duration
+	totalSeconds := r.media.Duration
 	processedSeconds := float64(state.outTimeMS) / 1_000_000.0
 	firstSeconds := float64(state.firstOutTimeMS) / 1_000_000.0
 
@@ -972,7 +972,7 @@ func (r *screenshotRunner) ffmpegSubtitleProcessedWindow(state *ffmpegRealtimeSt
 		totalSeconds -= firstSeconds
 	}
 	if totalSeconds <= 0 {
-		totalSeconds = r.duration
+		totalSeconds = r.media.Duration
 	}
 	if processedSeconds < 0 {
 		processedSeconds = 0
@@ -992,7 +992,7 @@ func (r *screenshotRunner) ffmpegProgressMetricsSuffix(state *ffmpegRealtimeStat
 	if isUsefulFFmpegFPS(state.fps) {
 		parts = append(parts, "fps="+strings.TrimSpace(state.fps))
 	}
-	if strings.TrimSpace(state.outTime) != "" && r.activeRenderPhase == "" {
+	if strings.TrimSpace(state.outTime) != "" && r.activeShot.Phase() == "" {
 		parts = append(parts, "time="+strings.TrimSpace(state.outTime))
 	}
 	if isUsefulFFmpegSpeed(state.speed) {
@@ -1006,27 +1006,23 @@ func (r *screenshotRunner) ffmpegProgressMetricsSuffix(state *ffmpegRealtimeStat
 
 // activeRenderProgressLabel 会返回当前截图渲染阶段适合展示的说明文本。
 func (r *screenshotRunner) activeRenderProgressLabel() string {
-	if r.activeShotIndex <= 0 || r.activeShotTotal <= 0 || strings.TrimSpace(r.activeShotName) == "" {
+	if r == nil {
 		return "正在渲染截图。"
 	}
-	if r.activeRenderPhase == "reencode" {
-		return fmt.Sprintf("正在重拍第 %d/%d 张截图：%s", r.activeShotIndex, r.activeShotTotal, r.activeShotName)
-	}
-	return fmt.Sprintf("正在渲染第 %d/%d 张截图：%s", r.activeShotIndex, r.activeShotTotal, r.activeShotName)
+	return r.activeShot.ProgressLabel()
 }
 
 // logShotAlignmentProgress 会记录当前截图进入字幕对齐阶段的进度文案。
 func (r *screenshotRunner) logShotAlignmentProgress() {
-	if r == nil || r.activeShotIndex <= 0 || r.activeShotTotal <= 0 {
+	if r == nil || !r.activeShot.Active() {
 		return
 	}
-	r.logProgress("截图开始", r.activeShotIndex, r.activeShotTotal,
-		fmt.Sprintf("正在对齐第 %d/%d 张截图时间点...", r.activeShotIndex, r.activeShotTotal))
+	r.logProgress("截图开始", r.activeShot.Current(), r.activeShot.Total(), r.activeShot.AlignmentDetail())
 }
 
 // logBitmapSubtitleVisibilityProgress 会记录当前截图进入位图字幕可见性校验阶段的进度文案。
 func (r *screenshotRunner) logBitmapSubtitleVisibilityProgress() {
-	if r == nil || r.activeShotIndex <= 0 || r.activeShotTotal <= 0 {
+	if r == nil || !r.activeShot.Active() {
 		return
 	}
 	label := "PGS/DVD"
@@ -1036,14 +1032,13 @@ func (r *screenshotRunner) logBitmapSubtitleVisibilityProgress() {
 	case r.isDVDSubtitle():
 		label = "DVD"
 	}
-	r.logProgress("截图开始", r.activeShotIndex, r.activeShotTotal,
-		fmt.Sprintf("正在校验 %s 字幕是否可见...", label))
+	r.logProgress("截图开始", r.activeShot.Current(), r.activeShot.Total(), r.activeShot.BitmapVisibilityDetail(label))
 }
 
 // displayAspectFilter 返回当前截图任务应使用的显示宽高比修正过滤器链。
 func (r *screenshotRunner) displayAspectFilter() string {
-	if strings.TrimSpace(r.aspectChain) != "" {
-		return r.aspectChain
+	if strings.TrimSpace(r.render.AspectChain) != "" {
+		return r.render.AspectChain
 	}
 	return buildDisplayAspectFilter()
 }
@@ -1053,10 +1048,10 @@ func (r *screenshotRunner) bitmapSubtitleTargetSize() (int, int) {
 	if r == nil {
 		return 0, 0
 	}
-	if r.displayWidth > 0 && r.displayHeight > 0 {
-		return r.displayWidth, r.displayHeight
+	if r.media.DisplayWidth > 0 && r.media.DisplayHeight > 0 {
+		return r.media.DisplayWidth, r.media.DisplayHeight
 	}
-	return r.videoWidth, r.videoHeight
+	return r.media.VideoWidth, r.media.VideoHeight
 }
 
 // hasUsablePGSCanvas 会判断当前是否拿到了可用于全画布叠加的 PGS 画布尺寸。
@@ -1065,7 +1060,7 @@ func (r *screenshotRunner) hasUsablePGSCanvas() bool {
 		return false
 	}
 	targetWidth, targetHeight := r.bitmapSubtitleTargetSize()
-	return r.subtitleCanvasWidth > 0 && r.subtitleCanvasHeight > 0 && targetWidth > 0 && targetHeight > 0
+	return r.render.SubtitleCanvasWidth > 0 && r.render.SubtitleCanvasHeight > 0 && targetWidth > 0 && targetHeight > 0
 }
 
 // buildPGSSubtitleScaleChain 会按目标画面尺寸缩放 PGS 画布。
@@ -1074,7 +1069,7 @@ func (r *screenshotRunner) buildPGSSubtitleScaleChain() string {
 		return ""
 	}
 	targetWidth, targetHeight := r.bitmapSubtitleTargetSize()
-	if targetWidth == r.subtitleCanvasWidth && targetHeight == r.subtitleCanvasHeight {
+	if targetWidth == r.render.SubtitleCanvasWidth && targetHeight == r.render.SubtitleCanvasHeight {
 		return ""
 	}
 	return fmt.Sprintf("scale=%d:%d", targetWidth, targetHeight)
@@ -1100,7 +1095,7 @@ func (r *screenshotRunner) buildPGSOverlayFilterComplex(videoChain, overlayTail 
 
 // buildPGSRenderFilterComplex 会构造截图主流程使用的 PGS 叠加滤镜图。
 func (r *screenshotRunner) buildPGSRenderFilterComplex() string {
-	return r.buildPGSOverlayFilterComplex(joinFilters(r.colorChain, r.displayAspectFilter()), "")
+	return r.buildPGSOverlayFilterComplex(joinFilters(r.render.ColorChain, r.displayAspectFilter()), "")
 }
 
 // buildFilterGraphStep 会为 filter_complex 生成单个具名步骤。
@@ -1195,7 +1190,7 @@ func (r *screenshotRunner) buildTextSubtitleRenderChain(timelineBase, aligned fl
 		return joinFilters(
 			baseTimeline,
 			selectFrame,
-			r.colorChain,
+			r.render.ColorChain,
 			subFilter,
 			r.displayAspectFilter(),
 		)
@@ -1204,7 +1199,7 @@ func (r *screenshotRunner) buildTextSubtitleRenderChain(timelineBase, aligned fl
 		baseTimeline,
 		selectFrame,
 		subFilter,
-		r.colorChain,
+		r.render.ColorChain,
 		r.displayAspectFilter(),
 	)
 }
@@ -1216,12 +1211,12 @@ func (r *screenshotRunner) buildTextSubtitleFilter() string {
 	}
 
 	sizePart := ""
-	if r.videoWidth > 0 && r.videoHeight > 0 {
-		sizePart = fmt.Sprintf(":original_size=%dx%d", r.videoWidth, r.videoHeight)
+	if r.media.VideoWidth > 0 && r.media.VideoHeight > 0 {
+		sizePart = fmt.Sprintf(":original_size=%dx%d", r.media.VideoWidth, r.media.VideoHeight)
 	}
 	fontPart := ""
-	if strings.TrimSpace(r.subtitleFontDir) != "" {
-		fontPart = fmt.Sprintf(":fontsdir='%s'", escapeFilterValue(r.subtitleFontDir))
+	if strings.TrimSpace(r.subtitleState.SubtitleFontDir) != "" {
+		fontPart = fmt.Sprintf(":fontsdir='%s'", escapeFilterValue(r.subtitleState.SubtitleFontDir))
 	}
 
 	switch r.subtitle.Mode {
