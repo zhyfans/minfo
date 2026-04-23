@@ -1,6 +1,6 @@
-// Package screenshot 提供截图文件压缩能力。
+// Package delivery 提供截图结果文件整理、打包与下载缓存能力。
 
-package screenshot
+package delivery
 
 import (
 	"archive/zip"

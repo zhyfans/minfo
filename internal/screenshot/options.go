@@ -1,53 +1,11 @@
-// Package screenshot 提供截图服务的参数规范化与独立进度心跳辅助。
+// Package screenshot 提供截图服务的参数规范化辅助函数。
 
 package screenshot
 
 import (
-	"context"
 	"strconv"
 	"strings"
-	"time"
 )
-
-// startStandaloneProgressHeartbeat 会通过外部日志回调周期性输出进度心跳，并返回停止函数。
-func startStandaloneProgressHeartbeat(ctx context.Context, onLog LogHandler, stage, detail string) func() {
-	if onLog == nil || strings.TrimSpace(stage) == "" || strings.TrimSpace(detail) == "" {
-		return func() {}
-	}
-
-	startedAt := time.Now()
-	done := make(chan struct{})
-	var ctxDone <-chan struct{}
-	if ctx != nil {
-		ctxDone = ctx.Done()
-	}
-
-	go func() {
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctxDone:
-				return
-			case <-done:
-				return
-			case <-ticker.C:
-				elapsed := time.Since(startedAt)
-				EmitProgressPercentLog(onLog, stage, subtitleHeartbeatStepPercent(elapsed), subtitleHeartbeatDetail(detail, elapsed))
-			}
-		}
-	}()
-
-	return func() {
-		select {
-		case <-done:
-			return
-		default:
-			close(done)
-		}
-	}
-}
 
 // NormalizeMode 规范化截图接口的 mode；未知值会回落为 zip。
 func NormalizeMode(raw string) string {
@@ -91,6 +49,20 @@ func NormalizeCount(raw string) int {
 		return defaultScreenshotCount
 	}
 	switch {
+	case count < minScreenshotCount:
+		return minScreenshotCount
+	case count > maxScreenshotCount:
+		return maxScreenshotCount
+	default:
+		return count
+	}
+}
+
+// normalizeScreenshotCount 规范化内部流程使用的截图数量。
+func normalizeScreenshotCount(count int) int {
+	switch {
+	case count == 0:
+		return defaultScreenshotCount
 	case count < minScreenshotCount:
 		return minScreenshotCount
 	case count > maxScreenshotCount:

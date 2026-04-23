@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	screenshotdvdinfo "minfo/internal/screenshot/dvdinfo"
 )
 
 // TestBuildTextSubtitleFilterForInternalTextSubtitle 验证内封文字字幕过滤器会保持与 shell 一致的 si 写法。
@@ -509,14 +511,14 @@ func TestDetectDisplayDimensionsForMetadataUsesDAR(t *testing.T) {
 }
 
 func TestNormalizeMediaInfoAspectRatioMapsCommonWidescreenValue(t *testing.T) {
-	ratio := normalizeMediaInfoAspectRatio("1.778")
+	ratio := screenshotdvdinfo.NormalizeAspectRatio("1.778")
 	if ratio != "16:9" {
 		t.Fatalf("ratio = %q, want 16:9", ratio)
 	}
 }
 
 func TestNormalizeMediaInfoAspectRatioMapsCommonFullscreenValue(t *testing.T) {
-	ratio := normalizeMediaInfoAspectRatio("1.333")
+	ratio := screenshotdvdinfo.NormalizeAspectRatio("1.333")
 	if ratio != "4:3" {
 		t.Fatalf("ratio = %q, want 4:3", ratio)
 	}

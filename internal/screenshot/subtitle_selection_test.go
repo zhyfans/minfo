@@ -6,10 +6,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	screenshotprogress "minfo/internal/screenshot/progress"
+	screenshotsubtitle "minfo/internal/screenshot/subtitle"
 )
 
 func TestSubtitleNeedsBluraySupplementSkipsGenericChinese(t *testing.T) {
-	if subtitleNeedsBluraySupplement("zho", "") {
+	if screenshotsubtitle.NeedsBluraySupplement("zho", "") {
 		t.Fatalf("expected generic Chinese from bdsub to skip ffprobe supplement")
 	}
 }
@@ -17,20 +20,20 @@ func TestSubtitleNeedsBluraySupplementSkipsGenericChinese(t *testing.T) {
 func TestPreferPreferredSubtitleRankPrefersHigherPayloadBytesForSameLanguagePGS(t *testing.T) {
 	best := preferredSubtitleRank{
 		LangClass:       "zh",
-		LangScore:       subtitleLanguageScore("zh"),
+		LangScore:       screenshotsubtitle.LanguageScore("zh"),
 		BitmapKind:      bitmapSubtitlePGS,
 		PayloadBytes:    100,
 		UsePayloadBytes: true,
 	}
 	current := preferredSubtitleRank{
 		LangClass:       "zh",
-		LangScore:       subtitleLanguageScore("zh"),
+		LangScore:       screenshotsubtitle.LanguageScore("zh"),
 		BitmapKind:      bitmapSubtitlePGS,
 		PayloadBytes:    200,
 		UsePayloadBytes: true,
 	}
 
-	if !preferPreferredSubtitleRank(current, best) {
+	if !screenshotsubtitle.PreferRank(current, best) {
 		t.Fatalf("expected same-language PGS candidate with higher payload_bytes to win")
 	}
 }
@@ -45,13 +48,13 @@ func TestBlurayHelperNeedsPayloadScanForSameLanguagePGS(t *testing.T) {
 		{PID: 0x1202, Lang: "zho"},
 	}
 
-	if !blurayHelperNeedsPayloadScan(raw, blurayHelperResult{BitrateMode: "metadata-only"}, helper, nil, "helper") {
+	if !screenshotsubtitle.HelperNeedsPayloadScan(raw, blurayHelperResult{BitrateMode: "metadata-only"}, helper, nil, "helper") {
 		t.Fatalf("expected same-language PGS tracks to require payload scan")
 	}
 }
 
 func TestBlurayHelperHasPayloadBytesAcceptsSampledMode(t *testing.T) {
-	if !blurayHelperHasPayloadBytes(blurayHelperResult{BitrateMode: "sampled-payload-bytes"}) {
+	if !screenshotsubtitle.HelperHasPayloadBytes(blurayHelperResult{BitrateMode: "sampled-payload-bytes"}) {
 		t.Fatalf("expected sampled payload mode to be treated as payload-ready")
 	}
 }
@@ -140,27 +143,27 @@ func TestShouldUseEmbeddedSubtitleFontsSkipsNonASSAndNonMatroska(t *testing.T) {
 func TestIsSupportedTextSubtitleCodec(t *testing.T) {
 	supported := []string{"ass", "ssa", "subrip", "srt"}
 	for _, codec := range supported {
-		if !isSupportedTextSubtitleCodec(codec) {
+		if !screenshotsubtitle.IsSupportedTextCodec(codec) {
 			t.Fatalf("expected %q to be supported", codec)
 		}
 	}
 
 	unsupported := []string{"mov_text", "webvtt", "text", "unknown"}
 	for _, codec := range unsupported {
-		if isSupportedTextSubtitleCodec(codec) {
+		if screenshotsubtitle.IsSupportedTextCodec(codec) {
 			t.Fatalf("expected %q to be unsupported", codec)
 		}
 	}
 }
 
 func TestIsSupportedTextSubtitlePath(t *testing.T) {
-	if !isSupportedTextSubtitlePath("/tmp/demo.ass") {
+	if !screenshotsubtitle.IsSupportedTextPath("/tmp/demo.ass") {
 		t.Fatal("expected ASS path to be supported")
 	}
-	if !isSupportedTextSubtitlePath("/tmp/demo.srt") {
+	if !screenshotsubtitle.IsSupportedTextPath("/tmp/demo.srt") {
 		t.Fatal("expected SRT path to be supported")
 	}
-	if isSupportedTextSubtitlePath("/tmp/demo.vtt") {
+	if screenshotsubtitle.IsSupportedTextPath("/tmp/demo.vtt") {
 		t.Fatal("expected VTT path to be unsupported")
 	}
 }
@@ -243,7 +246,7 @@ func TestInternalTextSubtitleExtractionPlanForSSA(t *testing.T) {
 }
 
 func TestSubtitleHeartbeatStepPercentApproachesCeiling(t *testing.T) {
-	percent := subtitleHeartbeatStepPercent(10 * time.Second)
+	percent := screenshotprogress.SubtitleHeartbeatStepPercent(10 * time.Second)
 	if percent <= 0 {
 		t.Fatalf("percent = %.1f, want > 0", percent)
 	}
@@ -253,7 +256,7 @@ func TestSubtitleHeartbeatStepPercentApproachesCeiling(t *testing.T) {
 }
 
 func TestSubtitleHeartbeatDetailIncludesElapsedTime(t *testing.T) {
-	detail := subtitleHeartbeatDetail("正在探测内封字幕轨。", 75*time.Second)
+	detail := screenshotprogress.SubtitleHeartbeatDetail("正在探测内封字幕轨。", 75*time.Second)
 	if !strings.Contains(detail, "正在探测内封字幕轨。") {
 		t.Fatalf("detail = %q, want original message", detail)
 	}
@@ -287,7 +290,7 @@ func TestShouldEmitSubtitleIndexProgressForPGS(t *testing.T) {
 		},
 	}
 
-	if !runner.shouldEmitSubtitleIndexProgress() {
+	if !runner.subtitleFlow().ShouldEmitIndexProgress() {
 		t.Fatal("expected PGS subtitle indexing to emit progress")
 	}
 }
@@ -301,7 +304,7 @@ func TestShouldEmitSubtitleIndexProgressSkipsExtractedText(t *testing.T) {
 		},
 	}
 
-	if runner.shouldEmitSubtitleIndexProgress() {
+	if runner.subtitleFlow().ShouldEmitIndexProgress() {
 		t.Fatal("expected extracted text subtitle indexing to avoid duplicate progress stage")
 	}
 }

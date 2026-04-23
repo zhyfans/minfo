@@ -84,11 +84,11 @@ func readMPLSDuration(path string) (time.Duration, error) {
 			return 0, fmt.Errorf("mpls: truncated playlist item body")
 		}
 
-		pos += 2  // item_length
-		pos += 5  // clip_information_file_name
-		pos += 4  // clip_codec_identifier
-		pos += 1  // reserved
-		pos += 2  // flags
+		pos += 2 // item_length
+		pos += 5 // clip_information_file_name
+		pos += 4 // clip_codec_identifier
+		pos += 1 // reserved
+		pos += 2 // flags
 		if pos+8 > itemEnd {
 			return 0, fmt.Errorf("mpls: truncated in/out time fields")
 		}
@@ -109,7 +109,7 @@ func readMPLSDuration(path string) (time.Duration, error) {
 		return 0, nil
 	}
 
-	return time.Duration(totalTicks*uint64(time.Second)/mplsClockRate), nil
+	return time.Duration(totalTicks * uint64(time.Second) / mplsClockRate), nil
 }
 
 // formatMPLSDuration 把 MPLS 时长格式化为 H:MM:SS。

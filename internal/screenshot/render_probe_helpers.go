@@ -10,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 
+	screenshotdvdinfo "minfo/internal/screenshot/dvdinfo"
+	screenshotsource "minfo/internal/screenshot/source"
+	screenshottimestamps "minfo/internal/screenshot/timestamps"
 	"minfo/internal/system"
 )
 
@@ -290,7 +293,7 @@ func (r *screenshotRunner) detectDisplayGeometry() (string, int, int) {
 		}
 	}
 
-	if looksLikeDVDSource(r.dvdProbeSource()) {
+	if screenshotsource.LooksLikeDVDSource(r.sourcePath) {
 		mediainfoDAR := ""
 		if r.subtitleState.HasDVDMediaInfoResult {
 			mediainfoDAR = strings.TrimSpace(r.subtitleState.DVDMediaInfoResult.DisplayAspectRatio)
@@ -298,9 +301,9 @@ func (r *screenshotRunner) detectDisplayGeometry() (string, int, int) {
 		r.logf("[信息] DVD 比例探测：ffprobe width=%d height=%d sar=%s dar=%s | mediainfo dar=%s",
 			width,
 			height,
-			displayProbeValue(sar),
-			displayProbeValue(dar),
-			displayProbeValue(mediainfoDAR),
+			screenshottimestamps.DisplayProbeValue(sar),
+			screenshottimestamps.DisplayProbeValue(dar),
+			screenshottimestamps.DisplayProbeValue(mediainfoDAR),
 		)
 		if width2, height2, filter, ok := r.detectDVDDisplayAspectFilterFromMediaInfo(width, height); ok {
 			r.logf("[信息] DVD 比例修正将直接使用 mediainfo DAR：%s", filter)
@@ -319,7 +322,7 @@ func (r *screenshotRunner) detectDVDDisplayAspectFilterFromMediaInfo(width, heig
 	if r == nil || !r.subtitleState.HasDVDMediaInfoResult {
 		return 0, 0, "", false
 	}
-	if !looksLikeDVDSource(r.dvdProbeSource()) {
+	if !screenshotsource.LooksLikeDVDSource(r.sourcePath) {
 		return 0, 0, "", false
 	}
 	if width <= 0 || height <= 0 {
@@ -334,7 +337,7 @@ func (r *screenshotRunner) detectDVDDisplayAspectFilterFromMediaInfo(width, heig
 // buildDisplayAspectFilterForMetadata 根据视频宽高和宽高比元数据生成静态截图所需的比例修正链。
 func buildDisplayAspectFilterForMetadata(width, height int, sar, dar string) string {
 	if width > 0 && height > 0 {
-		normalizedDAR := normalizeMediaInfoAspectRatio(dar)
+		normalizedDAR := screenshotdvdinfo.NormalizeAspectRatio(dar)
 		if darNum, darDen, ok := parseAspectRatio(normalizedDAR); ok {
 			rawAspect := float64(width) / float64(height)
 			displayAspect := float64(darNum) / float64(darDen)
@@ -363,7 +366,7 @@ func detectDisplayDimensionsForMetadata(width, height int, sar, dar string) (int
 		return 0, 0
 	}
 
-	normalizedDAR := normalizeMediaInfoAspectRatio(dar)
+	normalizedDAR := screenshotdvdinfo.NormalizeAspectRatio(dar)
 	if darNum, darDen, ok := parseAspectRatio(normalizedDAR); ok {
 		rawAspect := float64(width) / float64(height)
 		displayAspect := float64(darNum) / float64(darDen)

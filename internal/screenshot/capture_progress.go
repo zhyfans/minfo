@@ -8,6 +8,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	screenshotprogress "minfo/internal/screenshot/progress"
+	screenshottimestamps "minfo/internal/screenshot/timestamps"
 )
 
 type ffmpegRealtimeState struct {
@@ -99,7 +102,7 @@ func (r *screenshotRunner) ffmpegProgressPercent(stage, status string, state *ff
 			if percent < 0.1 {
 				percent = 0.1
 			}
-			return clampProgressPercent(minFloat(percent, 94))
+			return screenshotprogress.ClampPercent(minFloat(percent, 94))
 		}
 	}
 
@@ -126,7 +129,7 @@ func (r *screenshotRunner) ffmpegProgressPercent(stage, status string, state *ff
 			percent = 78
 		}
 	}
-	return clampProgressPercent(minFloat(float64(percent), 94))
+	return screenshotprogress.ClampPercent(minFloat(float64(percent), 94))
 }
 
 // approximateRenderProgressPercent 会优先根据输出时间或速度估算单帧渲染进度。
@@ -145,7 +148,7 @@ func approximateRenderProgressPercent(state *ffmpegRealtimeState) (float64, bool
 			if percent < 0.1 {
 				percent = 0.1
 			}
-			return clampProgressPercent(minFloat(percent, 94)), true
+			return screenshotprogress.ClampPercent(minFloat(percent, 94)), true
 		}
 	}
 
@@ -168,7 +171,7 @@ func approximateRenderProgressPercent(state *ffmpegRealtimeState) (float64, bool
 	if percent < 0.1 {
 		percent = 0.1
 	}
-	return clampProgressPercent(minFloat(percent, 94)), true
+	return screenshotprogress.ClampPercent(minFloat(percent, 94)), true
 }
 
 // approximateUnknownRenderProgressPercent 会在缺少稳定指标时用耗时平滑估算渲染进度。
@@ -192,7 +195,7 @@ func approximateUnknownRenderProgressPercent(state *ffmpegRealtimeState) (float6
 	if percent < 0.1 {
 		percent = 0.1
 	}
-	return clampProgressPercent(percent), true
+	return screenshotprogress.ClampPercent(percent), true
 }
 
 // ffmpegRenderProgressDetail 会生成截图渲染阶段的实时进度文案。
@@ -205,7 +208,7 @@ func (r *screenshotRunner) ffmpegRenderProgressDetail(state *ffmpegRealtimeState
 func (r *screenshotRunner) ffmpegSubtitleProgressDetail(state *ffmpegRealtimeState) string {
 	base := "正在提取内封文字字幕。"
 	if processedSeconds, totalSeconds, ok := r.ffmpegSubtitleProcessedWindow(state); ok {
-		return fmt.Sprintf("%s | 已处理 %s / %s", base, secToHMS(processedSeconds), secToHMS(totalSeconds))
+		return fmt.Sprintf("%s | 已处理 %s / %s", base, screenshottimestamps.SecToHMS(processedSeconds), screenshottimestamps.SecToHMS(totalSeconds))
 	}
 	return base + r.ffmpegProgressMetricsSuffix(state)
 }

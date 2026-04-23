@@ -1,6 +1,6 @@
-// Package screenshot 负责 Pixhost API 请求和直链归一化细节。
+// Package pixhost 负责 Pixhost API 请求和直链归一化细节。
 
-package screenshot
+package pixhost
 
 import (
 	"bytes"
@@ -20,24 +20,24 @@ import (
 	"minfo/internal/config"
 )
 
-const pixhostAPIURL = "https://api.pixhost.to/images"
+const apiURL = "https://api.pixhost.to/images"
 
-// pixhostThumbHostPattern 用于识别 Pixhost 返回的缩略图域名，并改写为原图域名。
-var pixhostThumbHostPattern = regexp.MustCompile(`^t([0-9]+)\.pixhost\.to$`)
+// thumbHostPattern 用于识别 Pixhost 返回的缩略图域名，并改写为原图域名。
+var thumbHostPattern = regexp.MustCompile(`^t([0-9]+)\.pixhost\.to$`)
 
-// pixhostResponse 描述 Pixhost JSON 响应中当前流程实际使用的字段。
-type pixhostResponse struct {
+// apiResponse 描述 Pixhost JSON 响应中当前流程实际使用的字段。
+type apiResponse struct {
 	ShowURL string `json:"show_url"`
 	ThURL   string `json:"th_url"`
 }
 
-// pixhostAPIEndpoint 会返回本轮上传应使用的 Pixhost API 地址。
-func pixhostAPIEndpoint() string {
-	return config.Getenv("PIXHOST_API_URL", pixhostAPIURL)
+// endpoint 会返回本轮上传应使用的 Pixhost API 地址。
+func endpoint() string {
+	return config.Getenv("PIXHOST_API_URL", apiURL)
 }
 
-// uploadSinglePixhostImage 上传单张图片到 Pixhost，并把返回的缩略图地址转换成直链。
-func uploadSinglePixhostImage(ctx context.Context, client *http.Client, apiURL, imagePath string) (string, error) {
+// uploadSingleImage 上传单张图片到 Pixhost，并把返回的缩略图地址转换成直链。
+func uploadSingleImage(ctx context.Context, client *http.Client, apiURL, imagePath string) (string, error) {
 	file, err := os.Open(imagePath)
 	if err != nil {
 		return "", err
@@ -85,18 +85,18 @@ func uploadSinglePixhostImage(ctx context.Context, client *http.Client, apiURL, 
 		return "", fmt.Errorf("pixhost returned HTTP %d", response.StatusCode)
 	}
 
-	var payload pixhostResponse
+	var payload apiResponse
 	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(payload.ShowURL) == "" || strings.TrimSpace(payload.ThURL) == "" {
 		return "", errors.New("pixhost response is missing show_url or th_url")
 	}
-	return normalizePixhostDirectURL(payload.ThURL)
+	return normalizeDirectURL(payload.ThURL)
 }
 
-// normalizePixhostDirectURL 会把 Pixhost 缩略图地址改写成直链，并校验结果仍然是有效的 HTTP 或 HTTPS URL。
-func normalizePixhostDirectURL(raw string) (string, error) {
+// normalizeDirectURL 会把 Pixhost 缩略图地址改写成直链，并校验结果仍然是有效的 HTTP 或 HTTPS URL。
+func normalizeDirectURL(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
 		return "", errors.New("pixhost direct URL is empty")
@@ -108,7 +108,7 @@ func normalizePixhostDirectURL(raw string) (string, error) {
 	}
 
 	parsed.Path = strings.Replace(parsed.Path, "/thumbs/", "/images/", 1)
-	if matches := pixhostThumbHostPattern.FindStringSubmatch(strings.ToLower(parsed.Host)); len(matches) == 2 {
+	if matches := thumbHostPattern.FindStringSubmatch(strings.ToLower(parsed.Host)); len(matches) == 2 {
 		parsed.Host = "img" + matches[1] + ".pixhost.to"
 	}
 

@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	screenshotsubtitle "minfo/internal/screenshot/subtitle"
 	"minfo/internal/system"
 )
 
@@ -141,7 +142,7 @@ func attachmentTagValue(tags map[string]interface{}, key string) string {
 	if len(tags) == 0 {
 		return ""
 	}
-	return strings.TrimSpace(jsonString(tags[key]))
+	return strings.TrimSpace(screenshotsubtitle.JSONString(tags[key]))
 }
 
 // isFontAttachment 会根据文件名、mime 和 codec 粗略判断附件是否为字体。

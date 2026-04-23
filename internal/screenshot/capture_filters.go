@@ -5,6 +5,8 @@ package screenshot
 import (
 	"fmt"
 	"strings"
+
+	screenshottimestamps "minfo/internal/screenshot/timestamps"
 )
 
 // displayAspectFilter 返回当前截图任务应使用的显示宽高比修正过滤器链。
@@ -81,8 +83,8 @@ func buildFilterGraphStep(input, chain, output string) string {
 
 // buildTextSubtitleRenderChain 会让文字字幕渲染与视频选帧共享同一条绝对时间轴。
 func (r *screenshotRunner) buildTextSubtitleRenderChain(timelineBase, aligned float64, subFilter string) string {
-	baseTimeline := fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", formatFloat(timelineBase))
-	selectFrame := fmt.Sprintf("select='gte(t,%s)'", formatFloat(aligned))
+	baseTimeline := fmt.Sprintf("setpts=PTS-STARTPTS+%s/TB", screenshottimestamps.FormatFloat(timelineBase))
+	selectFrame := fmt.Sprintf("select='gte(t,%s)'", screenshottimestamps.FormatFloat(aligned))
 	if r.usesLibplaceboColorspace() {
 		return joinFilters(
 			baseTimeline,

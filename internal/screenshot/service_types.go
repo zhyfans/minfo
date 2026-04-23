@@ -3,8 +3,7 @@
 package screenshot
 
 import (
-	"regexp"
-
+	screenshotpixhost "minfo/internal/screenshot/pixhost"
 	screenshotruntime "minfo/internal/screenshot/runtime"
 )
 
@@ -12,11 +11,7 @@ const (
 	defaultScreenshotCount = 4
 	minScreenshotCount     = 1
 	maxScreenshotCount     = 10
-
-	dvdPacketDiscontinuityGap = 30.0
 )
-
-var dvdTitleVOBPattern = regexp.MustCompile(`(?i)^VTS_(\d{2})_([1-9]\d*)\.VOB$`)
 
 const (
 	ModeZip   = "zip"
@@ -38,14 +33,10 @@ type ScreenshotsResult struct {
 }
 
 // UploadedImage 表示一次图床上传后返回的单张图片结果。
-type UploadedImage struct {
-	URL      string
-	Filename string
-	Size     int64
-}
+type UploadedImage = screenshotpixhost.UploadedImage
 
 // UploadItemHandler 处理图床上传过程中单张已完成图片的实时回调。
-type UploadItemHandler func(item UploadedImage)
+type UploadItemHandler = screenshotpixhost.UploadItemHandler
 
 // UploadResult 表示一次截图上传流程返回的直链文本和日志。
 type UploadResult struct {

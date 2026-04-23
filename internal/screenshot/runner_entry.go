@@ -4,16 +4,13 @@ package screenshot
 
 import (
 	"context"
+	"time"
 
-	"minfo/internal/media"
+	screenshotdvdinfo "minfo/internal/screenshot/dvdinfo"
+	screenshotprogress "minfo/internal/screenshot/progress"
+	screenshotsource "minfo/internal/screenshot/source"
+	screenshottimestamps "minfo/internal/screenshot/timestamps"
 )
-
-// resolvedScreenshotSources 表示截图入口阶段解析出的主媒体源与 DVD 附加探测源。
-type resolvedScreenshotSources struct {
-	sourcePath       string
-	dvdMediaInfoPath string
-	cleanup          func()
-}
 
 // runEngineScreenshotsWithLiveLogs 会解析输入源、生成随机时间点，并启动带实时日志的截图引擎流程。
 func runEngineScreenshotsWithLiveLogs(ctx context.Context, inputPath, outputDir, variant, subtitleMode string, count int, onLog LogHandler) (ScreenshotsResult, error) {
@@ -21,47 +18,31 @@ func runEngineScreenshotsWithLiveLogs(ctx context.Context, inputPath, outputDir,
 	if err != nil {
 		return ScreenshotsResult{}, err
 	}
-	defer sources.cleanup()
+	defer sources.Cleanup()
 
-	timestamps, err := generateScreenshotTimestamps(ctx, sources.sourcePath, count, onLog)
+	timestamps, err := generateScreenshotTimestamps(ctx, sources.SourcePath, count, onLog)
 	if err != nil {
 		return ScreenshotsResult{}, err
 	}
 
-	return runScreenshotsFromSource(ctx, sources.sourcePath, sources.dvdMediaInfoPath, outputDir, variant, subtitleMode, timestamps, onLog)
+	return runScreenshotsFromSource(ctx, sources.SourcePath, sources.DVDMediaInfoPath, outputDir, variant, subtitleMode, timestamps, onLog)
 }
 
 // resolveScreenshotSources 会把外部输入路径解析为截图主媒体源和 DVD 附加探测源。
-func resolveScreenshotSources(ctx context.Context, inputPath string, onLog LogHandler) (resolvedScreenshotSources, error) {
-	EmitProgressLog(onLog, "启动", 1, 3, "正在解析截图输入源。")
-	sourcePath, cleanupSource, err := media.ResolveScreenshotSource(ctx, inputPath)
-	if err != nil {
-		return resolvedScreenshotSources{}, err
-	}
-
-	EmitProgressLog(onLog, "启动", 2, 3, "正在定位 DVD 附加元数据源。")
-	dvdMediaInfoPath, cleanupDVD, dvdMediaInfoErr := media.ResolveDVDMediaInfoSource(ctx, inputPath)
-	if dvdMediaInfoErr != nil {
-		dvdMediaInfoPath = ""
-		cleanupDVD = func() {}
-	}
-
-	return resolvedScreenshotSources{
-		sourcePath:       sourcePath,
-		dvdMediaInfoPath: dvdMediaInfoPath,
-		cleanup: func() {
-			cleanupDVD()
-			cleanupSource()
-		},
-	}, nil
+func resolveScreenshotSources(ctx context.Context, inputPath string, onLog LogHandler) (screenshotsource.ResolvedInput, error) {
+	screenshotprogress.EmitStepLog(onLog, "启动", 1, 3, "正在解析截图输入源。")
+	screenshotprogress.EmitStepLog(onLog, "启动", 2, 3, "正在定位 DVD 附加元数据源。")
+	return screenshotsource.ResolveInput(ctx, inputPath)
 }
 
 // generateScreenshotTimestamps 会在入口阶段输出统一进度，并生成本轮随机截图时间点。
 func generateScreenshotTimestamps(ctx context.Context, sourcePath string, count int, onLog LogHandler) ([]string, error) {
 	detail := "正在估算影片时长并生成随机截图时间点。"
-	EmitProgressLog(onLog, "启动", 3, 3, detail)
-	stopHeartbeat := startStandaloneProgressHeartbeat(ctx, onLog, "启动", detail)
-	timestamps, err := randomScreenshotTimestampsForSource(ctx, sourcePath, count)
+	screenshotprogress.EmitStepLog(onLog, "启动", 3, 3, detail)
+	stopHeartbeat := screenshotprogress.StartHeartbeat(ctx, func(elapsed time.Duration) {
+		screenshotprogress.EmitPercentLog(onLog, "启动", screenshotprogress.SubtitleHeartbeatStepPercent(elapsed), screenshotprogress.SubtitleHeartbeatDetail(detail, elapsed))
+	})
+	timestamps, err := screenshottimestamps.RandomTimestampsForSource(ctx, sourcePath, normalizeScreenshotCount(count))
 	stopHeartbeat()
 	if err != nil {
 		return nil, err
@@ -111,12 +92,14 @@ func newScreenshotRunner(ctx context.Context, sourcePath, dvdMediaInfoPath, outp
 // logRuntimeBootstrap 会输出运行器切换和 DVD 选片等启动摘要日志。
 func (r *screenshotRunner) logRuntimeBootstrap() {
 	r.logf("[信息] 已切换为 Go 截图引擎。")
-	if !looksLikeDVDSource(r.dvdProbeSource()) {
+	if !screenshotsource.LooksLikeDVDSource(r.sourcePath) {
 		return
 	}
 
+	selectedVOBPath := screenshotdvdinfo.ResolveVOBPath(r.sourcePath, r.dvdMediaInfoPath)
+	selectedIFOPath := screenshotdvdinfo.ResolveProbePath(r.sourcePath, r.dvdMediaInfoPath)
 	r.logf("[信息] DVD 已选片段：VOB=%s | IFO=%s",
-		displayProbeValue(r.dvdSelectedVOBPath()),
-		displayProbeValue(r.dvdSelectedIFOPath()),
+		screenshottimestamps.DisplayProbeValue(selectedVOBPath),
+		screenshottimestamps.DisplayProbeValue(selectedIFOPath),
 	)
 }

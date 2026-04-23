@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+
+	screenshotdelivery "minfo/internal/screenshot/delivery"
+	screenshottimestamps "minfo/internal/screenshot/timestamps"
 )
 
 // screenshotRunState 维护单轮截图执行过程中需要累计的中间状态。
@@ -56,7 +59,7 @@ func (s *screenshotRunState) markFailed(outputName string, err error) int {
 
 // markSucceeded 会记录一张截图成功，并返回成功后累计完成数。
 func (s *screenshotRunState) markSucceeded(aligned float64) int {
-	s.usedSeconds[screenshotSecond(aligned)] = struct{}{}
+	s.usedSeconds[screenshottimestamps.ScreenshotSecond(aligned)] = struct{}{}
 	s.successCount++
 	s.processedShots++
 	return s.processedShots
@@ -90,12 +93,12 @@ func (r *screenshotRunner) prepareScreenshotCapture(requested float64, state *sc
 		return screenshotCapturePlan{}, false
 	}
 
-	outputName := uniqueScreenshotName(aligned, r.settings.Ext, state.usedNames)
+	outputName := screenshottimestamps.UniqueScreenshotName(aligned, r.settings.Ext, state.usedNames)
 	outputPath := filepath.Join(r.outputDir, outputName)
 	r.logf("[信息] 截图: 请求 %s → 对齐 %s → 输出 %s -> %s",
-		secToHMSMS(requested),
-		secToHMSMS(aligned),
-		secToHMSMS(aligned),
+		screenshottimestamps.SecToHMSMS(requested),
+		screenshottimestamps.SecToHMSMS(aligned),
+		screenshottimestamps.SecToHMSMS(aligned),
 		outputName,
 	)
 
@@ -121,13 +124,13 @@ func (r *screenshotRunner) resolveAlignedScreenshotTime(requested float64, state
 
 	candidate, adjusted, ok := r.resolveUniqueScreenshotSecond(requested, aligned, state.usedSeconds)
 	if !ok {
-		r.logf("[提示] 请求 %s 对齐后未找到新的唯一秒，跳过该截图。", secToHMSMS(requested))
+		r.logf("[提示] 请求 %s 对齐后未找到新的唯一秒，跳过该截图。", screenshottimestamps.SecToHMSMS(requested))
 		return 0, false
 	}
 	if adjusted {
 		r.logf("[提示] 请求 %s 对齐后命中已使用秒，改用唯一秒 %s",
-			secToHMSMS(requested),
-			secToHMSMS(candidate),
+			screenshottimestamps.SecToHMSMS(requested),
+			screenshottimestamps.SecToHMSMS(candidate),
 		)
 	}
 	return candidate, true
@@ -152,7 +155,7 @@ func (r *screenshotRunner) finalizeScreenshotRun(state *screenshotRunState) ([]s
 	r.logScreenshotRunSummary(state)
 
 	r.logProgress("整理", 1, 4, "正在整理截图文件列表。")
-	files, err := listScreenshotFiles(r.outputDir)
+	files, err := screenshotdelivery.ListImageFiles(r.outputDir)
 	if err != nil {
 		if state.successCount == 0 {
 			return nil, errors.New("no screenshots were generated")

@@ -6,6 +6,9 @@ import (
 	"os"
 	"strings"
 
+	screenshotsource "minfo/internal/screenshot/source"
+	screenshotsubtitle "minfo/internal/screenshot/subtitle"
+	screenshottimestamps "minfo/internal/screenshot/timestamps"
 	"minfo/internal/system"
 )
 
@@ -59,7 +62,7 @@ func (r *screenshotRunner) resolveRuntimeTools() error {
 
 // prepareRequestedTimestamps 会解析请求里的截图时间点并写回运行器状态。
 func (r *screenshotRunner) prepareRequestedTimestamps(timestamps []string) error {
-	requested, err := parseRequestedTimestamps(timestamps)
+	requested, err := screenshottimestamps.ParseRequestedTimestamps(timestamps)
 	if err != nil {
 		return err
 	}
@@ -79,13 +82,13 @@ func (r *screenshotRunner) prepareOutputDir() error {
 func (r *screenshotRunner) prepareMediaTimeline() error {
 	r.media.StartOffset = r.detectStartOffset()
 
-	duration, err := probeMediaDuration(r.ctx, r.tools.FFprobeBin, r.sourcePath)
+	duration, err := screenshottimestamps.ProbeMediaDuration(r.ctx, r.tools.FFprobeBin, r.sourcePath)
 	if err != nil {
 		return err
 	}
 	r.media.Duration = duration
 
-	if looksLikeDVDSource(r.dvdProbeSource()) {
+	if screenshotsource.LooksLikeDVDSource(r.sourcePath) {
 		r.preloadDVDMediaInfo()
 	}
 	return nil
@@ -93,17 +96,18 @@ func (r *screenshotRunner) prepareMediaTimeline() error {
 
 // prepareSubtitlePipeline 会完成选轨、提取、字体准备和字幕索引建立。
 func (r *screenshotRunner) prepareSubtitlePipeline() error {
+	subtitleRunner := r.subtitleFlow()
 	if r.subtitleMode != SubtitleModeOff {
-		r.prepareBlurayProbeContext()
+		subtitleRunner.PrepareBlurayProbeContext()
 	}
-	if err := r.chooseSubtitle(); err != nil {
+	if err := subtitleRunner.Choose(); err != nil {
 		return err
 	}
-	if err := r.prepareTextSubtitleRenderSource(); err != nil {
+	if err := subtitleRunner.PrepareTextSubtitleRenderSource(); err != nil {
 		return err
 	}
 	r.prepareEmbeddedSubtitleFonts()
-	r.logSelectedSubtitleSummary()
+	subtitleRunner.LogSelectedSubtitleSummary()
 	if r.subtitle.Mode != "none" {
 		r.ensureSubtitleIndex()
 	}
@@ -168,7 +172,7 @@ func (r *screenshotRunner) finalizeRenderPreparation() {
 	r.render.ColorChain = buildColorspaceChain(r.render.ColorInfo, r.tools.LibplaceboReady)
 	r.logColorspacePlan()
 	r.logProgressPercent("准备", 100, "画面参数准备完成。")
-	r.logf("[信息] 容器起始偏移：%.3fs | 影片总时长：%s", r.media.StartOffset, secToHMS(r.media.Duration))
+	r.logf("[信息] 容器起始偏移：%.3fs | 影片总时长：%s", r.media.StartOffset, screenshottimestamps.SecToHMS(r.media.Duration))
 }
 
 // logColorspacePlan 会输出当前色彩探测与渲染链的统一日志摘要。
@@ -211,4 +215,57 @@ func (r *screenshotRunner) cleanupTemporarySubtitleFontDir() {
 	}
 	_ = os.RemoveAll(r.subtitleState.SubtitleFontDir)
 	r.subtitleState.SubtitleFontDir = ""
+}
+
+func (r *screenshotRunner) subtitleFlow() *screenshotsubtitle.Runner {
+	return screenshotsubtitle.NewRunner(screenshotsubtitle.RunnerConfig{
+		Ctx:                      r.ctx,
+		SourcePath:               r.sourcePath,
+		DVDMediaInfoPath:         r.dvdMediaInfoPath,
+		SubtitleMode:             r.subtitleMode,
+		Settings:                 r.settings,
+		Tools:                    r.tools,
+		Media:                    &r.media,
+		SubtitleState:            &r.subtitleState,
+		Subtitle:                 &r.subtitle,
+		Logf:                     r.logf,
+		LogProgress:              r.logProgress,
+		LogProgressPercent:       r.logProgressPercent,
+		StartHeartbeat:           r.startProgressHeartbeat,
+		EnsureDVDMediaInfo:       r.ensureDVDMediaInfoResult,
+		IsSupportedBitmap:        r.isSupportedBitmapSubtitle,
+		RunFFmpegSubtitleExtract: r.runFFmpegSubtitleExtract,
+	})
+}
+
+func (r *screenshotRunner) preloadDVDMediaInfo() {
+	r.subtitleFlow().PreloadDVDMediaInfo()
+}
+
+func (r *screenshotRunner) prepareBlurayProbeContext() {
+	r.subtitleFlow().PrepareBlurayProbeContext()
+}
+
+func (r *screenshotRunner) chooseSubtitle() error {
+	return r.subtitleFlow().Choose()
+}
+
+func (r *screenshotRunner) prepareTextSubtitleRenderSource() error {
+	return r.subtitleFlow().PrepareTextSubtitleRenderSource()
+}
+
+func (r *screenshotRunner) shouldExtractInternalTextSubtitle() bool {
+	return r.subtitleFlow().ShouldExtractInternalTextSubtitle()
+}
+
+func (r *screenshotRunner) logSelectedSubtitleSummary() {
+	r.subtitleFlow().LogSelectedSubtitleSummary()
+}
+
+func (r *screenshotRunner) ensureSubtitleIndex() []subtitleSpan {
+	return r.subtitleFlow().EnsureIndex()
+}
+
+func internalTextSubtitleExtractionPlan(codec string) (string, string, string, string) {
+	return screenshotsubtitle.InternalTextSubtitleExtractionPlan(codec)
 }

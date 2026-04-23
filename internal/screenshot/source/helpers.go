@@ -1,18 +1,52 @@
-// Package screenshot 提供蓝光/DVD 路径与播放列表探测辅助函数。
+// Package source 提供截图流程需要的蓝光/DVD 路径与播放列表探测辅助函数。
 
-package screenshot
+package source
 
 import (
-	"fmt"
+	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
-	"strconv"
 	"strings"
+
+	"minfo/internal/media"
 )
 
-// looksLikeDVDSource 通过路径特征判断输入是否看起来像 DVD VIDEO_TS 源。
-func looksLikeDVDSource(path string) bool {
+var clipIDPattern = regexp.MustCompile(`[0-9]{5}M2TS`)
+
+// ResolvedInput 表示截图入口阶段解析出的主媒体源与 DVD 附加探测源。
+type ResolvedInput struct {
+	SourcePath       string
+	DVDMediaInfoPath string
+	Cleanup          func()
+}
+
+// ResolveInput 会把外部输入路径解析为截图主媒体源和 DVD 附加探测源。
+func ResolveInput(ctx context.Context, inputPath string) (ResolvedInput, error) {
+	sourcePath, cleanupSource, err := media.ResolveScreenshotSource(ctx, inputPath)
+	if err != nil {
+		return ResolvedInput{}, err
+	}
+
+	dvdMediaInfoPath, cleanupDVD, dvdMediaInfoErr := media.ResolveDVDMediaInfoSource(ctx, inputPath)
+	if dvdMediaInfoErr != nil {
+		dvdMediaInfoPath = ""
+		cleanupDVD = func() {}
+	}
+
+	return ResolvedInput{
+		SourcePath:       sourcePath,
+		DVDMediaInfoPath: dvdMediaInfoPath,
+		Cleanup: func() {
+			cleanupDVD()
+			cleanupSource()
+		},
+	}, nil
+}
+
+// LooksLikeDVDSource 通过路径特征判断输入是否看起来像 DVD VIDEO_TS 源。
+func LooksLikeDVDSource(path string) bool {
 	lower := strings.ToLower(strings.TrimSpace(path))
 	base := strings.ToLower(filepath.Base(lower))
 	parent := filepath.Base(filepath.Dir(path))
@@ -28,30 +62,8 @@ func looksLikeDVDSource(path string) bool {
 	return false
 }
 
-// normalizeStreamPID 会规范化流PID，并在输入为空或不受支持时返回稳定的默认值。
-func normalizeStreamPID(raw string) (int, bool) {
-	value := strings.ToLower(strings.TrimSpace(raw))
-	value = strings.TrimPrefix(value, "0x")
-	if strings.HasPrefix(strings.TrimSpace(raw), "0x") || strings.HasPrefix(strings.TrimSpace(raw), "0X") {
-		parsed, err := strconv.ParseInt(value, 16, 64)
-		if err != nil {
-			return 0, false
-		}
-		return int(parsed), true
-	}
-	if parsed, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil {
-		return parsed, true
-	}
-	return 0, false
-}
-
-// formatStreamPID 把流 PID 格式化为十六进制字符串。
-func formatStreamPID(value int) string {
-	return fmt.Sprintf("0x%04X", value)
-}
-
-// findBlurayRootFromVideo 从视频路径向上回溯，定位对应的蓝光根目录。
-func findBlurayRootFromVideo(videoPath string) (string, bool) {
+// FindBlurayRootFromVideo 从视频路径向上回溯，定位对应的蓝光根目录。
+func FindBlurayRootFromVideo(videoPath string) (string, bool) {
 	current := filepath.Dir(videoPath)
 	for {
 		if current == "/" || current == "." || current == "" {
@@ -81,8 +93,8 @@ type playlistScore struct {
 	FileSize  int64
 }
 
-// listBlurayPlaylistsRanked 按片段命中情况和总大小为蓝光播放列表排序。
-func listBlurayPlaylistsRanked(root, clip string) []string {
+// ListBlurayPlaylistsRanked 按片段命中情况和总大小为蓝光播放列表排序。
+func ListBlurayPlaylistsRanked(root, clip string) []string {
 	playlistDir := filepath.Join(root, "BDMV", "PLAYLIST")
 	streamDir := filepath.Join(root, "BDMV", "STREAM")
 
@@ -157,7 +169,6 @@ func listBlurayPlaylistsRanked(root, clip string) []string {
 	return playlists
 }
 
-// extractMPLSClipIDs 从 MPLS 文件内容里提取唯一的片段 ID 列表。
 func extractMPLSClipIDs(path string) []string {
 	data, err := os.ReadFile(path)
 	if err != nil {

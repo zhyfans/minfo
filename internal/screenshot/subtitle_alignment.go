@@ -5,12 +5,15 @@ package screenshot
 import (
 	"math"
 	"sort"
+
+	screenshotsubtitle "minfo/internal/screenshot/subtitle"
+	screenshottimestamps "minfo/internal/screenshot/timestamps"
 )
 
 // resolveUniqueScreenshotSecond 会在已占用秒级时间点集合中寻找一个不冲突的截图时间点。
 func (r *screenshotRunner) resolveUniqueScreenshotSecond(requested, aligned float64, usedSeconds map[int]struct{}) (float64, bool, bool) {
 	aligned = r.clampToDuration(aligned)
-	second := screenshotSecond(aligned)
+	second := screenshottimestamps.ScreenshotSecond(aligned)
 	if _, exists := usedSeconds[second]; !exists {
 		return aligned, false, true
 	}
@@ -19,7 +22,7 @@ func (r *screenshotRunner) resolveUniqueScreenshotSecond(requested, aligned floa
 		r.ensureSubtitleIndex()
 		for _, candidate := range r.uniqueAlignedCandidatesFromSubtitleIndex(requested) {
 			candidate = r.clampToDuration(candidate)
-			if _, exists := usedSeconds[screenshotSecond(candidate)]; exists {
+			if _, exists := usedSeconds[screenshottimestamps.ScreenshotSecond(candidate)]; exists {
 				continue
 			}
 			return candidate, true, true
@@ -44,8 +47,8 @@ func (r *screenshotRunner) uniqueAlignedCandidatesFromSubtitleIndex(requested fl
 	candidates := make([]secondCandidate, 0, len(r.subtitleState.Index))
 	seen := make(map[int]struct{}, len(r.subtitleState.Index))
 	for _, span := range r.subtitleState.Index {
-		startSecond := screenshotSecond(span.Start)
-		endSecond := screenshotSecond(span.End)
+		startSecond := screenshottimestamps.ScreenshotSecond(span.Start)
+		endSecond := screenshottimestamps.ScreenshotSecond(span.End)
 		for second := startSecond; second <= endSecond; second++ {
 			secondStart := math.Max(span.Start, float64(second))
 			secondEnd := math.Min(span.End, float64(second)+0.999)
@@ -53,7 +56,7 @@ func (r *screenshotRunner) uniqueAlignedCandidatesFromSubtitleIndex(requested fl
 				continue
 			}
 			candidate := secondStart + (secondEnd-secondStart)/2
-			secondKey := screenshotSecond(candidate)
+			secondKey := screenshottimestamps.ScreenshotSecond(candidate)
 			if _, exists := seen[secondKey]; exists {
 				continue
 			}
@@ -91,7 +94,7 @@ func (r *screenshotRunner) alignToSubtitle(requested float64) float64 {
 
 	index := r.ensureSubtitleIndex()
 	if len(index) == 0 {
-		r.logf("[提示] 全片字幕索引未找到可用字幕事件，按原时间点截图：%s", secToHMSMS(requested))
+		r.logf("[提示] 全片字幕索引未找到可用字幕事件，按原时间点截图：%s", screenshottimestamps.SecToHMSMS(requested))
 		return requested
 	}
 
@@ -100,16 +103,16 @@ func (r *screenshotRunner) alignToSubtitle(requested float64) float64 {
 		if candidate, ok := r.findNearestVisibleBitmapIndexedCandidate(requested); ok {
 			return r.logAlignedSubtitleIndexCandidate(requested, candidate)
 		}
-		r.logf("[提示] 全片字幕索引未找到可见字幕事件，按原时间点截图：%s", secToHMSMS(requested))
+		r.logf("[提示] 全片字幕索引未找到可见字幕事件，按原时间点截图：%s", screenshottimestamps.SecToHMSMS(requested))
 		return requested
 	}
 
-	if candidate, ok := snapFromIndex(requested, index, subtitleSnapEpsilon); ok {
+	if candidate, ok := screenshotsubtitle.SnapFromIndex(requested, index, subtitleSnapEpsilon); ok {
 		candidate = r.clampToDuration(candidate)
 		return r.logAlignedSubtitleIndexCandidate(requested, candidate)
 	}
 
-	r.logf("[提示] 全片字幕索引未找到可用字幕事件，按原时间点截图：%s", secToHMSMS(requested))
+	r.logf("[提示] 全片字幕索引未找到可用字幕事件，按原时间点截图：%s", screenshottimestamps.SecToHMSMS(requested))
 	return requested
 }
 
@@ -117,9 +120,9 @@ func (r *screenshotRunner) alignToSubtitle(requested float64) float64 {
 func (r *screenshotRunner) logAlignedSubtitleIndexCandidate(requested, candidate float64) float64 {
 	candidate = r.clampToDuration(candidate)
 	if floatDiffGT(candidate, requested) {
-		r.logf("[对齐] 请求 %s → 全片字幕索引 %s", secToHMSMS(requested), secToHMSMS(candidate))
+		r.logf("[对齐] 请求 %s → 全片字幕索引 %s", screenshottimestamps.SecToHMSMS(requested), screenshottimestamps.SecToHMSMS(candidate))
 	} else {
-		r.logf("[提示] 已直接复用全片字幕索引对齐到原时间点附近：%s", secToHMSMS(candidate))
+		r.logf("[提示] 已直接复用全片字幕索引对齐到原时间点附近：%s", screenshottimestamps.SecToHMSMS(candidate))
 	}
 	return candidate
 }
@@ -127,7 +130,7 @@ func (r *screenshotRunner) logAlignedSubtitleIndexCandidate(requested, candidate
 // acceptBitmapSubtitleCandidate 在接受位图候选时间点前验证该时刻是否真的渲染出字幕。
 func (r *screenshotRunner) acceptBitmapSubtitleCandidate(label string, candidate float64) (float64, bool) {
 	candidate = r.clampToDuration(candidate)
-	key := bitmapCandidateKey(candidate)
+	key := screenshotsubtitle.BitmapCandidateKey(candidate)
 	if _, rejected := r.subtitleState.RejectedBitmapCandidates[key]; rejected {
 		return 0, false
 	}
@@ -136,7 +139,7 @@ func (r *screenshotRunner) acceptBitmapSubtitleCandidate(label string, candidate
 	if err != nil {
 		r.logf("[提示] %s候选可视性验证失败，沿用该时间点：%s | 原因：%s",
 			label,
-			secToHMSMS(candidate),
+			screenshottimestamps.SecToHMSMS(candidate),
 			err.Error(),
 		)
 		return candidate, true
@@ -152,7 +155,7 @@ func (r *screenshotRunner) acceptBitmapSubtitleCandidate(label string, candidate
 					r.logf("[提示] %s候选仅在较大回溯窗口下渲染出字幕，后续位图截图改用 %ds 回溯窗口：%s",
 						label,
 						longBack,
-						secToHMSMS(candidate),
+						screenshottimestamps.SecToHMSMS(candidate),
 					)
 					return candidate, true
 				}
@@ -164,7 +167,7 @@ func (r *screenshotRunner) acceptBitmapSubtitleCandidate(label string, candidate
 		r.subtitleState.RejectedBitmapCandidates[key] = struct{}{}
 		r.logf("[提示] %s候选未实际渲染出字幕，继续搜索：%s",
 			label,
-			secToHMSMS(candidate),
+			screenshottimestamps.SecToHMSMS(candidate),
 		)
 		return 0, false
 	}
@@ -179,8 +182,8 @@ func (r *screenshotRunner) findNearestVisibleBitmapIndexedCandidate(requested fl
 
 	spans := append([]subtitleSpan(nil), r.subtitleState.Index...)
 	sort.Slice(spans, func(i, j int) bool {
-		left := math.Abs(bitmapSnapPoint(spans[i], subtitleSnapEpsilon) - requested)
-		right := math.Abs(bitmapSnapPoint(spans[j], subtitleSnapEpsilon) - requested)
+		left := math.Abs(screenshotsubtitle.BitmapSnapPoint(spans[i], subtitleSnapEpsilon) - requested)
+		right := math.Abs(screenshotsubtitle.BitmapSnapPoint(spans[j], subtitleSnapEpsilon) - requested)
 		if left == right {
 			return spans[i].Start < spans[j].Start
 		}
@@ -192,7 +195,7 @@ func (r *screenshotRunner) findNearestVisibleBitmapIndexedCandidate(requested fl
 		limit = 8
 	}
 	for _, span := range spans[:limit] {
-		candidate, ok := r.acceptBitmapSubtitleCandidate("全片字幕索引", bitmapSnapPoint(span, subtitleSnapEpsilon))
+		candidate, ok := r.acceptBitmapSubtitleCandidate("全片字幕索引", screenshotsubtitle.BitmapSnapPoint(span, subtitleSnapEpsilon))
 		if ok {
 			return candidate, true
 		}

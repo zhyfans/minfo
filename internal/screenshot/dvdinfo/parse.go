@@ -1,6 +1,6 @@
-// Package screenshot 提供 DVD mediainfo 结果解析、语言回退和轨道映射逻辑。
+// Package dvdinfo 提供 DVD mediainfo 结果解析、语言回退和轨道映射逻辑。
 
-package screenshot
+package dvdinfo
 
 import (
 	"encoding/json"
@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	screenshotruntime "minfo/internal/screenshot/runtime"
 )
 
 // mediaInfoPayload 描述 mediainfo JSON 中单个 media 节点的原始结构。
@@ -19,36 +21,35 @@ type mediaInfoPayload struct {
 	} `json:"media"`
 }
 
-// mediaInfoHexIDPattern 用于从诸如 "189 (0xBD)-32 (0x20)" 的 ID 字段中提取十六进制流号。
 var mediaInfoHexIDPattern = regexp.MustCompile(`(?i)\(0x([0-9a-f]+)\)`)
 
-// dvdMediaInfoNeedsLanguageFallback 判断结果中是否仍有字幕轨缺少可用语言信息。
-func dvdMediaInfoNeedsLanguageFallback(result dvdMediaInfoResult) bool {
+// NeedsLanguageFallback 判断结果中是否仍有字幕轨缺少可用语言信息。
+func NeedsLanguageFallback(result screenshotruntime.DVDMediaInfoResult) bool {
 	if len(result.Tracks) == 0 {
 		return false
 	}
 	for _, track := range result.Tracks {
-		if !dvdMediaInfoHasLanguage(track.Language) {
+		if !hasLanguage(track.Language) {
 			return true
 		}
 	}
 	return false
 }
 
-// mergeDVDMediaInfoLanguageFallback 会合并DVD媒体Info语言回退，并保留后续流程仍然需要的有效信息。
-func mergeDVDMediaInfoLanguageFallback(primary, fallback dvdMediaInfoResult) (dvdMediaInfoResult, bool) {
+// MergeLanguageFallback 会合并 DVD mediainfo 语言回退，并保留有效信息。
+func MergeLanguageFallback(primary, fallback screenshotruntime.DVDMediaInfoResult) (screenshotruntime.DVDMediaInfoResult, bool) {
 	if len(primary.Tracks) == 0 || len(fallback.Tracks) == 0 {
 		return primary, false
 	}
 
 	merged := primary
-	merged.Tracks = append([]dvdMediaInfoTrack(nil), primary.Tracks...)
+	merged.Tracks = append([]screenshotruntime.DVDMediaInfoTrack(nil), primary.Tracks...)
 
-	fallbackByStreamID := make(map[int][]dvdMediaInfoTrack, len(fallback.Tracks))
+	fallbackByStreamID := make(map[int][]screenshotruntime.DVDMediaInfoTrack, len(fallback.Tracks))
 	fallbackIndexByStreamID := make(map[int][]int, len(fallback.Tracks))
-	fallbackOrdered := make([]dvdMediaInfoTrack, 0, len(fallback.Tracks))
+	fallbackOrdered := make([]screenshotruntime.DVDMediaInfoTrack, 0, len(fallback.Tracks))
 	for _, track := range fallback.Tracks {
-		if !dvdMediaInfoHasLanguage(track.Language) {
+		if !hasLanguage(track.Language) {
 			continue
 		}
 		fallbackOrdered = append(fallbackOrdered, track)
@@ -65,11 +66,11 @@ func mergeDVDMediaInfoLanguageFallback(primary, fallback dvdMediaInfoResult) (dv
 	usedOrdered := make([]bool, len(fallbackOrdered))
 	used := false
 	for index := range merged.Tracks {
-		if dvdMediaInfoHasLanguage(merged.Tracks[index].Language) {
+		if hasLanguage(merged.Tracks[index].Language) {
 			continue
 		}
 
-		if mergedTrack, ok := fillDVDMediaInfoLanguageByStreamID(merged.Tracks[index], fallbackByStreamID, fallbackIndexByStreamID, usedOrdered); ok {
+		if mergedTrack, ok := fillLanguageByStreamID(merged.Tracks[index], fallbackByStreamID, fallbackIndexByStreamID, usedOrdered); ok {
 			merged.Tracks[index] = mergedTrack
 			used = true
 			continue
@@ -79,7 +80,7 @@ func mergeDVDMediaInfoLanguageFallback(primary, fallback dvdMediaInfoResult) (dv
 			if usedOrdered[fallbackIndex] {
 				continue
 			}
-			merged.Tracks[index] = mergeDVDMediaInfoTrack(merged.Tracks[index], candidate)
+			merged.Tracks[index] = mergeTrack(merged.Tracks[index], candidate)
 			usedOrdered[fallbackIndex] = true
 			used = true
 			break
@@ -92,8 +93,7 @@ func mergeDVDMediaInfoLanguageFallback(primary, fallback dvdMediaInfoResult) (dv
 	return merged, used
 }
 
-// fillDVDMediaInfoLanguageByStreamID 尝试按 StreamID 从回退结果中补齐单条字幕轨的语言信息。
-func fillDVDMediaInfoLanguageByStreamID(track dvdMediaInfoTrack, fallbackByStreamID map[int][]dvdMediaInfoTrack, fallbackIndexByStreamID map[int][]int, usedOrdered []bool) (dvdMediaInfoTrack, bool) {
+func fillLanguageByStreamID(track screenshotruntime.DVDMediaInfoTrack, fallbackByStreamID map[int][]screenshotruntime.DVDMediaInfoTrack, fallbackIndexByStreamID map[int][]int, usedOrdered []bool) (screenshotruntime.DVDMediaInfoTrack, bool) {
 	if track.StreamID <= 0 {
 		return track, false
 	}
@@ -111,14 +111,13 @@ func fillDVDMediaInfoLanguageByStreamID(track dvdMediaInfoTrack, fallbackByStrea
 			continue
 		}
 		usedOrdered[orderedIndex] = true
-		return mergeDVDMediaInfoTrack(track, candidate), true
+		return mergeTrack(track, candidate), true
 	}
 	return track, false
 }
 
-// mergeDVDMediaInfoTrack 会合并DVD媒体Info轨道，并保留后续流程仍然需要的有效信息。
-func mergeDVDMediaInfoTrack(track, fallback dvdMediaInfoTrack) dvdMediaInfoTrack {
-	if !dvdMediaInfoHasLanguage(track.Language) && dvdMediaInfoHasLanguage(fallback.Language) {
+func mergeTrack(track, fallback screenshotruntime.DVDMediaInfoTrack) screenshotruntime.DVDMediaInfoTrack {
+	if !hasLanguage(track.Language) && hasLanguage(fallback.Language) {
 		track.Language = fallback.Language
 		track.Source = fallback.Source
 	}
@@ -131,8 +130,7 @@ func mergeDVDMediaInfoTrack(track, fallback dvdMediaInfoTrack) dvdMediaInfoTrack
 	return track
 }
 
-// dvdMediaInfoHasLanguage 判断语言字段是否包含有效值。
-func dvdMediaInfoHasLanguage(language string) bool {
+func hasLanguage(language string) bool {
 	switch strings.ToLower(strings.TrimSpace(language)) {
 	case "", "unknown", "und", "undefined", "null", "n/a", "na":
 		return false
@@ -141,8 +139,7 @@ func dvdMediaInfoHasLanguage(language string) bool {
 	}
 }
 
-// decodeMediaInfoPayloads 兼容 mediainfo 输出的单对象或对象数组 JSON 结构。
-func decodeMediaInfoPayloads(data []byte) ([]mediaInfoPayload, error) {
+func decodePayloads(data []byte) ([]mediaInfoPayload, error) {
 	var single mediaInfoPayload
 	if err := json.Unmarshal(data, &single); err == nil {
 		return []mediaInfoPayload{single}, nil
@@ -156,8 +153,7 @@ func decodeMediaInfoPayloads(data []byte) ([]mediaInfoPayload, error) {
 	return nil, fmt.Errorf("unsupported mediainfo JSON shape")
 }
 
-// mediaInfoTrackString 按候选键顺序读取轨道字段，并返回第一个非空字符串值。
-func mediaInfoTrackString(track map[string]interface{}, keys ...string) string {
+func trackString(track map[string]interface{}, keys ...string) string {
 	for _, key := range keys {
 		value := strings.TrimSpace(jsonString(track[key]))
 		if value != "" {
@@ -167,8 +163,7 @@ func mediaInfoTrackString(track map[string]interface{}, keys ...string) string {
 	return ""
 }
 
-// parseMediaInfoStreamID 会解析媒体Info流ID，并把原始输入转换成结构化结果。
-func parseMediaInfoStreamID(raw string) (int, bool) {
+func parseStreamID(raw string) (int, bool) {
 	matches := mediaInfoHexIDPattern.FindAllStringSubmatch(raw, -1)
 	if len(matches) > 0 {
 		last := matches[len(matches)-1]
@@ -190,8 +185,7 @@ func parseMediaInfoStreamID(raw string) (int, bool) {
 	return 0, false
 }
 
-// parseMediaInfoTrackDuration 会解析媒体Info轨道时长，并把原始输入转换成结构化结果。
-func parseMediaInfoTrackDuration(raw string) (float64, bool) {
+func parseTrackDuration(raw string) (float64, bool) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
 		return 0, false
@@ -203,8 +197,10 @@ func parseMediaInfoTrackDuration(raw string) (float64, bool) {
 	return parsed / 1000.0, true
 }
 
-// normalizeMediaInfoAspectRatio 把 mediainfo 的显示宽高比统一转换成更稳定的 ratio 字符串。
-func normalizeMediaInfoAspectRatio(raw string) string {
+// NormalizeAspectRatio 把 mediainfo 的显示宽高比统一转换成更稳定的 ratio 字符串。
+func NormalizeAspectRatio(raw string) string { return normalizeAspectRatio(raw) }
+
+func normalizeAspectRatio(raw string) string {
 	value := strings.TrimSpace(raw)
 	if value == "" {
 		return ""
@@ -221,28 +217,18 @@ func normalizeMediaInfoAspectRatio(raw string) string {
 		return value
 	}
 
-	for _, candidate := range []struct {
-		num int
-		den int
-	}{
-		{num: 4, den: 3},
-		{num: 16, den: 9},
-		{num: 185, den: 100},
-		{num: 239, den: 100},
-		{num: 235, den: 100},
-	} {
+	for _, candidate := range []struct{ num, den int }{{4, 3}, {16, 9}, {185, 100}, {239, 100}, {235, 100}} {
 		target := float64(candidate.num) / float64(candidate.den)
 		if math.Abs(ratio-target) <= 0.01 {
 			return fmt.Sprintf("%d:%d", candidate.num, candidate.den)
 		}
 	}
-
 	return value
 }
 
-// resolveDVDMediaInfoTracks 将 MediaInfo 的 DVD 字幕轨尽量映射回 ffprobe 的原始字幕 PID。
-func resolveDVDMediaInfoTracks(raw []subtitleTrack, tracks []dvdMediaInfoTrack) map[int]dvdMediaInfoTrack {
-	resolved := make(map[int]dvdMediaInfoTrack, len(tracks))
+// ResolveTracks 将 MediaInfo 的 DVD 字幕轨尽量映射回 ffprobe 的原始字幕 PID。
+func ResolveTracks(raw []screenshotruntime.SubtitleTrack, tracks []screenshotruntime.DVDMediaInfoTrack) map[int]screenshotruntime.DVDMediaInfoTrack {
+	resolved := make(map[int]screenshotruntime.DVDMediaInfoTrack, len(tracks))
 	if len(raw) == 0 || len(tracks) == 0 {
 		return resolved
 	}
@@ -270,9 +256,7 @@ func resolveDVDMediaInfoTracks(raw []subtitleTrack, tracks []dvdMediaInfoTrack) 
 		return resolved
 	}
 
-	type rawTrackPID struct {
-		pid int
-	}
+	type rawTrackPID struct{ pid int }
 	rawPIDs := make([]rawTrackPID, 0, len(raw))
 	for _, track := range raw {
 		if strings.ToLower(strings.TrimSpace(track.Codec)) != "dvd_subtitle" {
@@ -284,11 +268,9 @@ func resolveDVDMediaInfoTracks(raw []subtitleTrack, tracks []dvdMediaInfoTrack) 
 		}
 		rawPIDs = append(rawPIDs, rawTrackPID{pid: pid})
 	}
-	sort.Slice(rawPIDs, func(i, j int) bool {
-		return rawPIDs[i].pid < rawPIDs[j].pid
-	})
+	sort.Slice(rawPIDs, func(i, j int) bool { return rawPIDs[i].pid < rawPIDs[j].pid })
 
-	mediaInfoCopy := append([]dvdMediaInfoTrack(nil), tracks...)
+	mediaInfoCopy := append([]screenshotruntime.DVDMediaInfoTrack(nil), tracks...)
 	sort.Slice(mediaInfoCopy, func(i, j int) bool {
 		if mediaInfoCopy[i].StreamID != mediaInfoCopy[j].StreamID {
 			return mediaInfoCopy[i].StreamID < mediaInfoCopy[j].StreamID
@@ -304,4 +286,39 @@ func resolveDVDMediaInfoTracks(raw []subtitleTrack, tracks []dvdMediaInfoTrack) 
 		resolved[rawPIDs[index].pid] = mediaInfoCopy[index]
 	}
 	return resolved
+}
+
+func jsonString(value interface{}) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case fmt.Stringer:
+		return typed.String()
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(typed), 'f', -1, 64)
+	case int:
+		return strconv.Itoa(typed)
+	case int64:
+		return strconv.FormatInt(typed, 10)
+	default:
+		return fmt.Sprint(typed)
+	}
+}
+
+func normalizeStreamPID(raw string) (int, bool) {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	value = strings.TrimPrefix(value, "0x")
+	if strings.HasPrefix(strings.TrimSpace(raw), "0x") || strings.HasPrefix(strings.TrimSpace(raw), "0X") {
+		parsed, err := strconv.ParseInt(value, 16, 64)
+		if err != nil {
+			return 0, false
+		}
+		return int(parsed), true
+	}
+	if parsed, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil {
+		return parsed, true
+	}
+	return 0, false
 }

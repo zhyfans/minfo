@@ -1,6 +1,6 @@
-// Package screenshot 负责 Pixhost 上传批次的日志、结果和可上传文件整理。
+// Package pixhost 负责 Pixhost 上传批次的日志、结果和可上传文件整理。
 
-package screenshot
+package pixhost
 
 import (
 	"errors"
@@ -13,8 +13,8 @@ import (
 	"strings"
 )
 
-// pixhostUploadBatch 维护单次图床上传批次的日志、直链和图片结果。
-type pixhostUploadBatch struct {
+// uploadBatch 维护单次图床上传批次的日志、直链和图片结果。
+type uploadBatch struct {
 	onLog        LogHandler
 	onItem       UploadItemHandler
 	logLines     []string
@@ -24,8 +24,8 @@ type pixhostUploadBatch struct {
 	lossyIndexes []int
 }
 
-// newPixhostUploadBatch 会为一次 Pixhost 上传请求创建新的批次状态容器。
-func newPixhostUploadBatch(lossyFiles []string, onLog LogHandler, onItem UploadItemHandler) *pixhostUploadBatch {
+// newUploadBatch 会为一次 Pixhost 上传请求创建新的批次状态容器。
+func newUploadBatch(lossyFiles []string, onLog LogHandler, onItem UploadItemHandler) *uploadBatch {
 	lossySet := make(map[string]struct{}, len(lossyFiles))
 	for _, name := range lossyFiles {
 		name = strings.TrimSpace(name)
@@ -35,7 +35,7 @@ func newPixhostUploadBatch(lossyFiles []string, onLog LogHandler, onItem UploadI
 		lossySet[name] = struct{}{}
 	}
 
-	return &pixhostUploadBatch{
+	return &uploadBatch{
 		onLog:        onLog,
 		onItem:       onItem,
 		logLines:     make([]string, 0),
@@ -47,7 +47,7 @@ func newPixhostUploadBatch(lossyFiles []string, onLog LogHandler, onItem UploadI
 }
 
 // logs 会返回当前批次累计的完整上传日志文本。
-func (b *pixhostUploadBatch) logs() string {
+func (b *uploadBatch) logs() string {
 	if b == nil {
 		return ""
 	}
@@ -55,7 +55,7 @@ func (b *pixhostUploadBatch) logs() string {
 }
 
 // appendLog 会追加一条上传日志，并在存在实时回调时同步推送。
-func (b *pixhostUploadBatch) appendLog(format string, args ...any) {
+func (b *uploadBatch) appendLog(format string, args ...any) {
 	if b == nil {
 		return
 	}
@@ -67,7 +67,7 @@ func (b *pixhostUploadBatch) appendLog(format string, args ...any) {
 }
 
 // recordFailure 会记录单张图片上传失败的日志。
-func (b *pixhostUploadBatch) recordFailure(imagePath string, err error) {
+func (b *uploadBatch) recordFailure(imagePath string, err error) {
 	if b == nil {
 		return
 	}
@@ -75,7 +75,7 @@ func (b *pixhostUploadBatch) recordFailure(imagePath string, err error) {
 }
 
 // recordSuccess 会记录单张图片上传成功后的直链、元数据和实时回调。
-func (b *pixhostUploadBatch) recordSuccess(imagePath, directURL string) {
+func (b *uploadBatch) recordSuccess(imagePath, directURL string) {
 	if b == nil {
 		return
 	}
@@ -93,19 +93,24 @@ func (b *pixhostUploadBatch) recordSuccess(imagePath, directURL string) {
 }
 
 // finalize 会输出批次摘要，并生成最终返回给调用方的整理结果。
-func (b *pixhostUploadBatch) finalize(total int) (string, string, []UploadedImage, []int, error) {
+func (b *uploadBatch) finalize(total int) (Result, error) {
 	if b == nil {
-		return "", "", nil, nil, errors.New("pixhost upload batch is nil")
+		return Result{}, errors.New("pixhost upload batch is nil")
 	}
 
 	b.appendLog("")
 	b.appendLog("处理完成! 成功: %d/%d", len(b.links), total)
 	if len(b.links) == 0 {
-		return "", b.logs(), b.items, b.lossyIndexes, errors.New("pixhost upload completed but returned no links")
+		return Result{Logs: b.logs(), Items: b.items, LossyIndexes: b.lossyIndexes}, errors.New("pixhost upload completed but returned no links")
 	}
 
 	output := strings.Join(extractDirectLinks(strings.Join(b.links, "\n")), "\n")
-	return output, b.logs(), b.items, b.lossyIndexes, nil
+	return Result{
+		Output:       output,
+		Logs:         b.logs(),
+		Items:        b.items,
+		LossyIndexes: b.lossyIndexes,
+	}, nil
 }
 
 // buildUploadedImage 会根据本地文件和直链结果构建一条可返回给前端的图片记录。
@@ -123,10 +128,10 @@ func buildUploadedImage(imagePath, directURL string) UploadedImage {
 }
 
 // collectUploadableImages 从路径列表中筛出可上传的图片，并按文件名排序。
-func collectUploadableImages(paths []string) []string {
+func collectUploadableImages(paths []string, maxUploadBytes int64) []string {
 	candidates := make([]string, 0, len(paths))
 	for _, path := range paths {
-		if !isUploadableImage(path) {
+		if !isUploadableImage(path, maxUploadBytes) {
 			continue
 		}
 		candidates = append(candidates, path)
@@ -136,12 +141,12 @@ func collectUploadableImages(paths []string) []string {
 }
 
 // isUploadableImage 检查文件是否存在、尺寸合理且 MIME 类型为图片。
-func isUploadableImage(path string) bool {
+func isUploadableImage(path string, maxUploadBytes int64) bool {
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
 		return false
 	}
-	if info.Size() <= 0 || info.Size() > oversizeBytes {
+	if info.Size() <= 0 || (maxUploadBytes > 0 && info.Size() > maxUploadBytes) {
 		return false
 	}
 

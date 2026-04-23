@@ -6,11 +6,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	screenshotsubtitle "minfo/internal/screenshot/subtitle"
 )
 
 // TestParseFFprobePacketCompactLineKeyless 会验证无键名 compact 输出能被正确解析。
 func TestParseFFprobePacketCompactLineKeyless(t *testing.T) {
-	packet, ok := parseFFprobePacketCompactLine("12.500000|0.040000|2048")
+	packet, ok := screenshotsubtitle.ParseFFprobePacketCompactLine("12.500000|0.040000|2048")
 	if !ok {
 		t.Fatal("expected compact packet line to parse")
 	}
@@ -21,7 +23,7 @@ func TestParseFFprobePacketCompactLineKeyless(t *testing.T) {
 
 // TestParseFFprobePacketCompactLineKeyed 会验证带键名 compact 输出能被正确解析。
 func TestParseFFprobePacketCompactLineKeyed(t *testing.T) {
-	packet, ok := parseFFprobePacketCompactLine("packet|pts_time=12.500000|duration_time=0.040000|size=2048")
+	packet, ok := screenshotsubtitle.ParseFFprobePacketCompactLine("packet|pts_time=12.500000|duration_time=0.040000|size=2048")
 	if !ok {
 		t.Fatal("expected keyed compact packet line to parse")
 	}
@@ -32,7 +34,7 @@ func TestParseFFprobePacketCompactLineKeyed(t *testing.T) {
 
 // TestSubtitleIndexScanProgressPercent 会验证字幕索引扫描百分比的换算结果。
 func TestSubtitleIndexScanProgressPercent(t *testing.T) {
-	percent := subtitleIndexScanProgressPercent(50, 100)
+	percent := screenshotsubtitle.IndexScanProgressPercent(50, 100)
 	if percent != 47 {
 		t.Fatalf("percent = %.1f, want 47.0", percent)
 	}
@@ -40,7 +42,7 @@ func TestSubtitleIndexScanProgressPercent(t *testing.T) {
 
 // TestSubtitleIndexScanProgressDetail 会验证字幕索引扫描详情文案的拼接格式。
 func TestSubtitleIndexScanProgressDetail(t *testing.T) {
-	detail := subtitleIndexScanProgressDetail("正在扫描全片 PGS 字幕索引。", 50, 100)
+	detail := screenshotsubtitle.IndexScanProgressDetail("正在扫描全片 PGS 字幕索引。", 50, 100)
 	if detail != "正在扫描全片 PGS 字幕索引。 | 已扫描 00:00:50 / 00:01:40" {
 		t.Fatalf("detail = %q, want scan detail", detail)
 	}
@@ -56,7 +58,7 @@ func TestProbePacketSpansParsesCompactOutput(t *testing.T) {
 		},
 	}
 
-	spans, err := runner.probePacketSpans(nil, true, 100, -1, 0)
+	spans, err := runner.subtitleFlow().ProbePacketSpans(nil, true, 100, -1, 0)
 	if err != nil {
 		t.Fatalf("probePacketSpans() error = %v", err)
 	}
@@ -88,7 +90,7 @@ func TestProbePacketSpansEmitsPTSBasedProgress(t *testing.T) {
 		},
 	}
 
-	_, err := runner.probePacketSpans(nil, true, 100, -1, 0)
+	_, err := runner.subtitleFlow().ProbePacketSpans(nil, true, 100, -1, 0)
 	if err != nil {
 		t.Fatalf("probePacketSpans() error = %v", err)
 	}

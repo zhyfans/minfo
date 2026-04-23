@@ -13,6 +13,8 @@ import (
 	"minfo/internal/httpapi/transport"
 	"minfo/internal/media"
 	"minfo/internal/screenshot"
+	screenshotdelivery "minfo/internal/screenshot/delivery"
+	screenshotprogress "minfo/internal/screenshot/progress"
 )
 
 // ScreenshotsHandler 会根据请求方法分发截图生成、预下载和文件下载逻辑。
@@ -168,8 +170,8 @@ func prepareScreenshotZipDownload(ctx context.Context, path, tempDir, variant, s
 		return "", logs, err
 	}
 
-	screenshot.EmitProgressLog(onLog, "整理", 4, 4, "正在写入下载缓存。")
-	token, err := screenshot.SavePreparedDownload(zipBytes)
+	screenshotprogress.EmitStepLog(onLog, "整理", 4, 4, "正在写入下载缓存。")
+	token, err := screenshotdelivery.SavePreparedDownload(zipBytes)
 	if err != nil {
 		return "", logs, err
 	}
@@ -199,12 +201,12 @@ func generateScreenshotZip(ctx context.Context, path, tempDir, variant, subtitle
 		return nil, result.Logs, err
 	}
 
-	screenshot.EmitProgressLog(onLog, "整理", 2, 4, "正在压缩截图文件。")
-	zipBytes, err := screenshot.ZipFiles(result.Files)
+	screenshotprogress.EmitStepLog(onLog, "整理", 2, 4, "正在压缩截图文件。")
+	zipBytes, err := screenshotdelivery.ZipFiles(result.Files)
 	if err != nil {
 		return nil, result.Logs, err
 	}
-	screenshot.EmitProgressLog(onLog, "整理", 3, 4, "截图压缩包已生成。")
+	screenshotprogress.EmitStepLog(onLog, "整理", 3, 4, "截图压缩包已生成。")
 	return zipBytes, result.Logs, nil
 }
 
@@ -229,7 +231,7 @@ func pickRealtimeLogEntries(logger *infoLogger) []transport.LogEntry {
 
 // servePreparedScreenshotDownload 根据令牌读取已准备好的 ZIP 文件并交给 HTTP 层输出。
 func servePreparedScreenshotDownload(w http.ResponseWriter, r *http.Request, token string) {
-	filePath, err := screenshot.GetPreparedDownload(token)
+	filePath, err := screenshotdelivery.GetPreparedDownload(token)
 	if err != nil {
 		transport.WriteError(w, http.StatusNotFound, "download expired or not found")
 		return

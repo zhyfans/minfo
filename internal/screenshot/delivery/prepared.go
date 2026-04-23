@@ -1,6 +1,6 @@
-// Package screenshot 管理已准备下载文件的缓存与清理。
+// Package delivery 提供截图结果文件整理、打包与下载缓存能力。
 
-package screenshot
+package delivery
 
 import (
 	"crypto/rand"
@@ -78,7 +78,6 @@ func GetPreparedDownload(token string) (string, error) {
 	return item.path, nil
 }
 
-// prunePreparedDownloads 删除过期缓存及其对应的临时文件，避免缓存持续增长。
 func prunePreparedDownloads(now time.Time) {
 	preparedDownloads.mu.Lock()
 	defer preparedDownloads.mu.Unlock()
@@ -92,7 +91,6 @@ func prunePreparedDownloads(now time.Time) {
 	}
 }
 
-// buildPreparedDownloadToken 生成一个随机的下载令牌。
 func buildPreparedDownloadToken() (string, error) {
 	buf := make([]byte, 16)
 	if _, err := rand.Read(buf); err != nil {

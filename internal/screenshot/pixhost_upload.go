@@ -1,12 +1,12 @@
-// Package screenshot 负责 Pixhost 上传流程编排与结果汇总。
+// Package screenshot 负责截图完成后的图床上传编排。
 
 package screenshot
 
 import (
 	"context"
-	"errors"
-	"net/http"
 	"strings"
+
+	screenshotpixhost "minfo/internal/screenshot/pixhost"
 )
 
 // runPixhostUploadWithLiveLogs 会先生成截图，再把图片上传到 Pixhost，并合并两阶段日志。
@@ -16,50 +16,33 @@ func runPixhostUploadWithLiveLogs(ctx context.Context, inputPath, outputDir, var
 		return UploadResult{Logs: screenshotResult.Logs}, err
 	}
 
-	output, uploadLogs, items, lossyIndexes, err := uploadImagesToPixhost(ctx, screenshotResult.Files, screenshotResult.LossyPNGFiles, onLog, onItem)
-	logs := mergePixhostUploadLogs(screenshotResult.Logs, uploadLogs)
+	uploadResult, err := screenshotpixhost.UploadImages(ctx, screenshotResult.Files, screenshotResult.LossyPNGFiles, oversizeBytes, onLog, onItem)
+	logs := mergePixhostUploadLogs(screenshotResult.Logs, uploadResult.Logs)
 	if err != nil {
 		return UploadResult{
 			Logs:            logs,
-			Items:           items,
+			Items:           uploadResult.Items,
 			LossyPNGFiles:   screenshotResult.LossyPNGFiles,
-			LossyPNGIndexes: lossyIndexes,
+			LossyPNGIndexes: uploadResult.LossyIndexes,
 		}, err
 	}
 	return UploadResult{
-		Output:          output,
+		Output:          uploadResult.Output,
 		Logs:            logs,
-		Items:           items,
+		Items:           uploadResult.Items,
 		LossyPNGFiles:   screenshotResult.LossyPNGFiles,
-		LossyPNGIndexes: lossyIndexes,
+		LossyPNGIndexes: uploadResult.LossyIndexes,
 	}, nil
 }
 
 // mergePixhostUploadLogs 会把截图阶段和上传阶段日志按原顺序拼接成最终输出。
 func mergePixhostUploadLogs(screenshotLogs, uploadLogs string) string {
-	return strings.TrimSpace(strings.Join(filterNonEmptyStrings(screenshotLogs, uploadLogs), "\n\n"))
-}
-
-// uploadImagesToPixhost 过滤可上传图片，逐个上传到 Pixhost，并返回整理后的直链文本和日志。
-func uploadImagesToPixhost(ctx context.Context, files, lossyFiles []string, onLog LogHandler, onItem UploadItemHandler) (string, string, []UploadedImage, []int, error) {
-	images := collectUploadableImages(files)
-	batch := newPixhostUploadBatch(lossyFiles, onLog, onItem)
-	if len(images) == 0 {
-		batch.appendLog("警告: 未找到有效图片文件")
-		return "", batch.logs(), nil, nil, errors.New("no uploadable screenshots were found")
+	parts := make([]string, 0, 2)
+	if strings.TrimSpace(screenshotLogs) != "" {
+		parts = append(parts, strings.TrimSpace(screenshotLogs))
 	}
-
-	batch.appendLog("开始处理 %d 个文件...", len(images))
-	client := &http.Client{}
-	apiURL := pixhostAPIEndpoint()
-	for _, imagePath := range images {
-		directURL, err := uploadSinglePixhostImage(ctx, client, apiURL, imagePath)
-		if err != nil {
-			batch.recordFailure(imagePath, err)
-			continue
-		}
-		batch.recordSuccess(imagePath, directURL)
+	if strings.TrimSpace(uploadLogs) != "" {
+		parts = append(parts, strings.TrimSpace(uploadLogs))
 	}
-
-	return batch.finalize(len(images))
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
