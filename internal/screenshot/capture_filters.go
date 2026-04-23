@@ -18,6 +18,19 @@ func (r *screenshotRunner) displayAspectFilter() string {
 	return buildDisplayAspectFilter()
 }
 
+// joinFilters 连接多个非空 ffmpeg 过滤器片段。
+func joinFilters(parts ...string) string {
+	filters := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		filters = append(filters, part)
+	}
+	return strings.Join(filters, ",")
+}
+
 // bitmapSubtitleTargetSize 会返回位图字幕叠加阶段需要匹配的目标画面尺寸。
 func (r *screenshotRunner) bitmapSubtitleTargetSize() (int, int) {
 	if r == nil {
