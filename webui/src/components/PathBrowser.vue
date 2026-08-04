@@ -7,7 +7,7 @@
                     <nav class="browser-breadcrumbs" aria-label="当前路径">
                         <button
                             v-for="item in breadcrumbItems"
-                            :key="item.path || 'roots'"
+                            :key="item.key || item.path || 'roots'"
                             class="browser-crumb"
                             type="button"
                             :disabled="busy || browserLoading || item.current"
@@ -120,7 +120,7 @@
 
 <script setup>
 import { computed } from "vue";
-import { formatFileSize } from "../utils/path-browser";
+import { buildBreadcrumbItems, formatFileSize } from "../utils/path-browser";
 
 const props = defineProps({
     path: { type: String, required: true },
@@ -166,28 +166,6 @@ const showEntrySize = (entry) => !entry?.isDir && Number.isFinite(entry?.size) &
 
 const formatEntrySize = (value) => formatFileSize(value);
 
-function buildBreadcrumbItems(value) {
-    const normalized = typeof value === "string" ? value.replace(/\\/g, "/").replace(/\/+$/, "") : "";
-    if (normalized === "") {
-        return [{ label: "可用挂载路径", path: "", current: true }];
-    }
-
-    const absolute = normalized.startsWith("/");
-    const parts = normalized.split("/").filter(Boolean);
-    if (parts.length === 0) {
-        return [{ label: "/", path: "/", current: true }];
-    }
-
-    return parts.map((part, index) => {
-        const prefix = absolute ? "/" : "";
-        const path = prefix + parts.slice(0, index + 1).join("/");
-        return {
-            label: part,
-            path,
-            current: index === parts.length - 1,
-        };
-    });
-}
 </script>
 
 <style scoped>

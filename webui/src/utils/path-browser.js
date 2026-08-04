@@ -146,6 +146,20 @@ export function getParentDirectory(dir, root) {
     return normalized.slice(0, slash);
 }
 
+export function buildBreadcrumbItems(value) {
+    const normalized = typeof value === "string" ? cleanPath(value.replace(/\\/g, "/")) : "";
+    if (normalized === "") {
+        return [{ key: "roots", label: "可用挂载路径", path: "", current: true }];
+    }
+
+    const virtualISO = parseVirtualISOPath(normalized);
+    if (virtualISO) {
+        return buildVirtualISOBreadcrumbItems(virtualISO.isoPath, virtualISO.innerPath);
+    }
+
+    return buildFileSystemBreadcrumbItems(normalized);
+}
+
 export function canNavigateUp(browserDir, browserRoot, browserRoots) {
     if (!browserDir) {
         return false;
@@ -171,6 +185,69 @@ export function buildVirtualISOPath(isoPath, innerPath = "/") {
     return `${ISO_BROWSER_PREFIX}${cleanedISO}!${cleanedInner}`;
 }
 
+function buildFileSystemBreadcrumbItems(value) {
+    const absolute = value.startsWith("/");
+    const parts = value.split("/").filter(Boolean);
+    if (parts.length === 0) {
+        return [{ key: "root", label: "/", path: "/", current: true }];
+    }
+
+    return parts.map((part, index) => {
+        const prefix = absolute ? "/" : "";
+        const itemPath = prefix + parts.slice(0, index + 1).join("/");
+        return {
+            key: `fs:${itemPath || part}:${index}`,
+            label: part,
+            path: itemPath,
+            current: index === parts.length - 1,
+        };
+    });
+}
+
+function buildVirtualISOBreadcrumbItems(isoPath, innerPath) {
+    const isoRootPath = buildVirtualISOPath(isoPath, "/");
+    const items = [
+        {
+            key: "iso-prefix",
+            label: ISO_BROWSER_PREFIX,
+            path: isoRootPath,
+            current: false,
+        },
+    ];
+
+    const normalizedISOPath = isoPath.replace(/\\/g, "/").replace(/\/+$/, "");
+    const absolute = normalizedISOPath.startsWith("/");
+    const isoParts = normalizedISOPath.split("/").filter(Boolean);
+    const isoFileIndex = isoParts.length - 1;
+
+    for (let index = 0; index < isoParts.length; index += 1) {
+        const part = isoParts[index];
+        const prefix = absolute ? "/" : "";
+        const itemPath = prefix + isoParts.slice(0, index + 1).join("/");
+        const isISOFile = index === isoFileIndex;
+        items.push({
+            key: `iso-source:${itemPath}:${index}`,
+            label: part,
+            path: isISOFile ? isoRootPath : itemPath,
+            current: isISOFile && innerPath === "/",
+        });
+    }
+
+    const innerParts = normalizeVirtualISOInnerPath(innerPath).split("/").filter(Boolean);
+    for (let index = 0; index < innerParts.length; index += 1) {
+        const itemInnerPath = `/${innerParts.slice(0, index + 1).join("/")}`;
+        const itemPath = buildVirtualISOPath(isoPath, itemInnerPath);
+        items.push({
+            key: `iso-inner:${itemPath}:${index}`,
+            label: innerParts[index],
+            path: itemPath,
+            current: index === innerParts.length - 1,
+        });
+    }
+
+    return items;
+}
+
 function isISOFilePath(value) {
     return /\.iso$/i.test(value || "");
 }
@@ -183,7 +260,7 @@ function isVideoFilePath(value) {
     return /\.(m2ts|mts|mkv|mp4|m4v|mov|avi|wmv|flv|mpg|mpeg|m2v|ts|vob|ifo|webm)$/i.test(value || "");
 }
 
-function parseVirtualISOPath(value) {
+export function parseVirtualISOPath(value) {
     if (!value || !value.startsWith(ISO_BROWSER_PREFIX)) {
         return null;
     }
