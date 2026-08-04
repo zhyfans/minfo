@@ -23,6 +23,7 @@ type LogHandler = screenshotruntime.LineHandler
 // UploadOptions 表示图床上传时的可选运行参数。
 type UploadOptions struct {
 	ProxyURL string
+	Domain   string
 }
 
 // Result 表示一次 Pixhost 上传批次返回的直链、日志和图片结果。

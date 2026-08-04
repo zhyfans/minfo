@@ -86,6 +86,10 @@
                                 @blur="handleScreenshotCountBlur"
                             />
                         </div>
+                        <div class="field">
+                            <label class="field-label-muted">Pixhost 域名</label>
+                            <PixhostDomainPicker v-model="pixhostDomain" :busy="busy" />
+                        </div>
                         <div class="field config-field-wide">
                             <label for="upload-proxy-url" class="field-label-muted">图床代理</label>
                             <input
@@ -177,6 +181,7 @@ import ImageLinksPanel from "./components/ImageLinksPanel.vue";
 import NoticeToast from "./components/NoticeToast.vue";
 import OutputPanel from "./components/OutputPanel.vue";
 import PathBrowser from "./components/PathBrowser.vue";
+import PixhostDomainPicker from "./components/PixhostDomainPicker.vue";
 import ScreenshotHDRProcessorPicker from "./components/ScreenshotHDRProcessorPicker.vue";
 import ScreenshotSubtitleModePicker from "./components/ScreenshotSubtitleModePicker.vue";
 import ScreenshotVariantPicker from "./components/ScreenshotVariantPicker.vue";
@@ -194,6 +199,7 @@ const screenshotVariant = ref(persistedState.screenshotVariant);
 const screenshotSubtitleMode = ref(persistedState.screenshotSubtitleMode);
 const screenshotHDRProcessor = ref(persistedState.screenshotHDRProcessor);
 const screenshotCount = ref(persistedState.screenshotCount);
+const pixhostDomain = ref(persistedState.pixhostDomain);
 const uploadProxyURL = ref(persistedState.uploadProxyURL);
 const bdinfoMode = ref(persistedState.bdinfoMode);
 const configExpanded = ref(persistedState.configExpanded);
@@ -209,6 +215,7 @@ const mediaActions = useMediaActions(
     screenshotSubtitleMode,
     screenshotHDRProcessor,
     screenshotCount,
+    pixhostDomain,
     uploadProxyURL,
     pathBrowser.hasInput,
 );
@@ -294,8 +301,8 @@ const handleTorrentSubmit = async (options) => {
 };
 
 watch(
-    [path, browserDir, screenshotVariant, screenshotSubtitleMode, screenshotHDRProcessor, screenshotCount, uploadProxyURL, configExpanded, bdinfoMode, torrentOptions],
-    ([nextPath, nextBrowserDir, nextVariant, nextSubtitleMode, nextHDRProcessor, nextScreenshotCount, nextUploadProxyURL, nextConfigExpanded, nextBDInfoMode, nextTorrentOptions]) => {
+    [path, browserDir, screenshotVariant, screenshotSubtitleMode, screenshotHDRProcessor, screenshotCount, pixhostDomain, uploadProxyURL, configExpanded, bdinfoMode, torrentOptions],
+    ([nextPath, nextBrowserDir, nextVariant, nextSubtitleMode, nextHDRProcessor, nextScreenshotCount, nextPixhostDomain, nextUploadProxyURL, nextConfigExpanded, nextBDInfoMode, nextTorrentOptions]) => {
         saveAppState({
             path: nextPath,
             browserDir: nextBrowserDir,
@@ -303,6 +310,7 @@ watch(
             screenshotSubtitleMode: nextSubtitleMode,
             screenshotHDRProcessor: nextHDRProcessor,
             screenshotCount: nextScreenshotCount,
+            pixhostDomain: nextPixhostDomain,
             uploadProxyURL: nextUploadProxyURL,
             configExpanded: nextConfigExpanded,
             bdinfoMode: nextBDInfoMode,

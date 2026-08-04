@@ -43,7 +43,10 @@ func (j *screenshotJob) run() {
 
 	switch j.mode {
 	case screenshot.ModeLinks:
-		uploadOptions := screenshot.UploadOptions{ProxyURL: j.proxyURL}
+		uploadOptions := screenshot.UploadOptions{
+			ProxyURL: j.proxyURL,
+			Domain:   j.pixhostDomain,
+		}
 		onItem := func(item screenshot.UploadedImage) {
 			j.appendLinkItem(buildTransportImageLinkItem(item))
 		}

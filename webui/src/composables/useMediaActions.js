@@ -14,7 +14,7 @@ import {
 import { clearActiveTask, loadActiveTask, saveActiveTask } from "../utils/storage";
 import { buildBBCodeText, buildCopyText, buildLinkText, copyText, extractDirectLinks, mergeOutputLinks } from "../utils/output";
 
-export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode, screenshotHDRProcessor, screenshotCount, uploadProxyURL, hasInput) {
+export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode, screenshotHDRProcessor, screenshotCount, pixhostDomain, uploadProxyURL, hasInput) {
     const outputText = ref("");
     const linkItems = ref([]);
     const busy = ref(false);
@@ -414,6 +414,7 @@ export function useMediaActions(path, screenshotVariant, screenshotSubtitleMode,
                     count > 0 ? count : requestedTimestamps.length > 0 ? requestedTimestamps.length : screenshotCount.value,
                     "links",
                     uploadProxyURL.value.trim(),
+                    pixhostDomain.value,
                     requestedTimestamps,
                 );
                 applyLinkProgress(action, job.status, job.progress);

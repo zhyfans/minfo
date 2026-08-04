@@ -20,10 +20,8 @@ import (
 	"minfo/internal/config"
 )
 
-const apiURL = "https://api.pixhost.to/images"
-
 // thumbHostPattern 用于识别 Pixhost 返回的缩略图域名，并改写为原图域名。
-var thumbHostPattern = regexp.MustCompile(`^t([0-9]+)\.pixhost\.to$`)
+var thumbHostPattern = regexp.MustCompile(`^t([0-9]+)\.pixhost\.(to|cc)$`)
 
 // apiResponse 描述 Pixhost JSON 响应中当前流程实际使用的字段。
 type apiResponse struct {
@@ -32,8 +30,15 @@ type apiResponse struct {
 }
 
 // endpoint 会返回本轮上传应使用的 Pixhost API 地址。
-func endpoint() string {
-	return config.Getenv("PIXHOST_API_URL", apiURL)
+func endpoint(options UploadOptions) (string, error) {
+	domain, err := NormalizeDomain(options.Domain)
+	if err != nil {
+		return "", err
+	}
+	if domain == DefaultDomain {
+		return config.Getenv("PIXHOST_API_URL", apiURLForDomain(DefaultDomain)), nil
+	}
+	return apiURLForDomain(domain), nil
 }
 
 // newHTTPClient 构造 Pixhost 上传使用的 HTTP 客户端。
@@ -147,8 +152,8 @@ func normalizeDirectURL(raw string) (string, error) {
 	}
 
 	parsed.Path = strings.Replace(parsed.Path, "/thumbs/", "/images/", 1)
-	if matches := thumbHostPattern.FindStringSubmatch(strings.ToLower(parsed.Host)); len(matches) == 2 {
-		parsed.Host = "img" + matches[1] + ".pixhost.to"
+	if matches := thumbHostPattern.FindStringSubmatch(strings.ToLower(parsed.Host)); len(matches) == 3 {
+		parsed.Host = "img" + matches[1] + ".pixhost." + matches[2]
 	}
 
 	result := parsed.String()

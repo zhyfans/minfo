@@ -7,6 +7,7 @@ const DEFAULT_STATE = {
     screenshotSubtitleMode: "auto",
     screenshotHDRProcessor: "libplacebo",
     screenshotCount: 4,
+    pixhostDomain: "pixhost.to",
     uploadProxyURL: "",
     configExpanded: false,
     bdinfoMode: "code",
@@ -98,6 +99,7 @@ function normalizeState(value) {
         screenshotSubtitleMode: normalizeSubtitleMode(source.screenshotSubtitleMode),
         screenshotHDRProcessor: normalizeHDRProcessor(source.screenshotHDRProcessor),
         screenshotCount: normalizeScreenshotCount(source.screenshotCount),
+        pixhostDomain: normalizePixhostDomain(source.pixhostDomain),
         uploadProxyURL: normalizeUploadProxyURL(source.uploadProxyURL),
         configExpanded: source.configExpanded === true,
         bdinfoMode: normalizeBDInfoMode(source.bdinfoMode),
@@ -179,6 +181,10 @@ function normalizeScreenshotCount(value) {
 
 function normalizeUploadProxyURL(value) {
     return typeof value === "string" ? value.trim() : DEFAULT_STATE.uploadProxyURL;
+}
+
+function normalizePixhostDomain(value) {
+    return value === "pixhost.cc" ? "pixhost.cc" : DEFAULT_STATE.pixhostDomain;
 }
 
 function normalizeTorrentOptions(value) {

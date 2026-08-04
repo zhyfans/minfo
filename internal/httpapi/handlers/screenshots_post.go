@@ -60,7 +60,10 @@ func handleScreenshotsPost(w http.ResponseWriter, r *http.Request) {
 			request.SubtitleMode,
 			request.HDRProcessor,
 			request.Count,
-			screenshot.UploadOptions{ProxyURL: request.ProxyURL},
+			screenshot.UploadOptions{
+				ProxyURL: request.ProxyURL,
+				Domain:   request.PixhostDomain,
+			},
 			logger.LogLine,
 		)
 		if err != nil {

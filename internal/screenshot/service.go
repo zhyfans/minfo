@@ -84,6 +84,11 @@ func RunUploadAtTimestampsWithLiveEventsWithOptions(ctx context.Context, inputPa
 	return uploadScreenshotResult(ctx, screenshotResult, options, onLog, onItem)
 }
 
+// NormalizePixhostDomain 校验并规范化前端传入的 Pixhost 主域名。
+func NormalizePixhostDomain(value string) (string, error) {
+	return screenshotpixhost.NormalizeDomain(value)
+}
+
 // uploadScreenshotResult 会上传截图结果，并合并截图与上传阶段日志。
 func uploadScreenshotResult(ctx context.Context, screenshotResult ScreenshotsResult, options UploadOptions, onLog LogHandler, onItem UploadItemHandler) (UploadResult, error) {
 	uploadResult, err := screenshotpixhost.UploadImagesWithOptions(ctx, screenshotResult.Files, screenshotResult.LossyPNGFiles, oversizeBytes, options, onLog, onItem)

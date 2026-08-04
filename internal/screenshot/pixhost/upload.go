@@ -27,7 +27,11 @@ func UploadImagesWithOptions(ctx context.Context, files, lossyFiles []string, ma
 		batch.appendLog("代理设置无效: %s", err.Error())
 		return Result{Logs: batch.logs()}, err
 	}
-	apiURL := endpoint()
+	apiURL, err := endpoint(options)
+	if err != nil {
+		batch.appendLog("Pixhost 域名无效: %s", err.Error())
+		return Result{Logs: batch.logs()}, err
+	}
 	for _, imagePath := range images {
 		directURL, thumbnailURL, err := uploadSingleImage(ctx, client, apiURL, imagePath)
 		if err != nil {

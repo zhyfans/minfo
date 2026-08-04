@@ -32,6 +32,32 @@ func TestNormalizeProxyURLRejectsUnsupportedScheme(t *testing.T) {
 	}
 }
 
+func TestNormalizePixhostDomainAllowsEmptyValue(t *testing.T) {
+	domain, err := normalizePixhostDomain(" ")
+	if err != nil {
+		t.Fatalf("normalizePixhostDomain returned error: %v", err)
+	}
+	if domain != "" {
+		t.Fatalf("domain = %q, want empty", domain)
+	}
+}
+
+func TestNormalizePixhostDomainAllowsPixhostCC(t *testing.T) {
+	domain, err := normalizePixhostDomain(" PIXHOST.CC ")
+	if err != nil {
+		t.Fatalf("normalizePixhostDomain returned error: %v", err)
+	}
+	if domain != "pixhost.cc" {
+		t.Fatalf("domain = %q, want pixhost.cc", domain)
+	}
+}
+
+func TestNormalizePixhostDomainRejectsUnsupportedDomain(t *testing.T) {
+	if _, err := normalizePixhostDomain("pixhost.example"); err == nil {
+		t.Fatal("expected unsupported pixhost domain error")
+	}
+}
+
 func TestNormalizeScreenshotFormTimestampsAllowsRepeatedTimestampFields(t *testing.T) {
 	request := &http.Request{Form: url.Values{
 		"timestamp": {"00:01:02", "01:02:03"},

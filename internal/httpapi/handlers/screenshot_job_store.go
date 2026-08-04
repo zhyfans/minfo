@@ -39,6 +39,7 @@ type screenshotJob struct {
 	hdrProcessor    string
 	count           int
 	proxyURL        string
+	pixhostDomain   string
 	timestamps      []string
 	status          string
 	output          string
@@ -70,22 +71,23 @@ func createScreenshotJob(request screenshotRequest) (*screenshotJob, error) {
 	taskContext, cancel := context.WithCancel(context.Background())
 	now := time.Now()
 	job := &screenshotJob{
-		id:           jobID,
-		mode:         request.Mode,
-		inputPath:    request.InputPath,
-		variant:      request.Variant,
-		subtitleMode: request.SubtitleMode,
-		hdrProcessor: request.HDRProcessor,
-		count:        request.Count,
-		proxyURL:     request.ProxyURL,
-		timestamps:   append([]string(nil), request.Timestamps...),
-		status:       screenshotJobStatusPending,
-		createdAt:    now,
-		updatedAt:    now,
-		logger:       newInfoLogger(),
-		cleanup:      request.Cleanup,
-		taskContext:  taskContext,
-		cancel:       cancel,
+		id:            jobID,
+		mode:          request.Mode,
+		inputPath:     request.InputPath,
+		variant:       request.Variant,
+		subtitleMode:  request.SubtitleMode,
+		hdrProcessor:  request.HDRProcessor,
+		count:         request.Count,
+		proxyURL:      request.ProxyURL,
+		pixhostDomain: request.PixhostDomain,
+		timestamps:    append([]string(nil), request.Timestamps...),
+		status:        screenshotJobStatusPending,
+		createdAt:     now,
+		updatedAt:     now,
+		logger:        newInfoLogger(),
+		cleanup:       request.Cleanup,
+		taskContext:   taskContext,
+		cancel:        cancel,
 	}
 
 	screenshotJobs.mu.Lock()

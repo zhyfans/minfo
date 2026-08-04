@@ -16,15 +16,16 @@ import (
 
 // screenshotRequest 表示一次截图表单请求解析后的完整运行参数。
 type screenshotRequest struct {
-	Mode         string
-	InputPath    string
-	Cleanup      func()
-	Variant      string
-	SubtitleMode string
-	HDRProcessor string
-	Count        int
-	ProxyURL     string
-	Timestamps   []string
+	Mode          string
+	InputPath     string
+	Cleanup       func()
+	Variant       string
+	SubtitleMode  string
+	HDRProcessor  string
+	Count         int
+	ProxyURL      string
+	PixhostDomain string
+	Timestamps    []string
 }
 
 // screenshotRunOptions 表示截图流程真正执行时需要的规格化选项。
@@ -48,6 +49,12 @@ func parseScreenshotFormRequest(r *http.Request) (screenshotRequest, error) {
 		return screenshotRequest{}, err
 	}
 
+	pixhostDomain, err := normalizePixhostDomain(r.FormValue("pixhost_domain"))
+	if err != nil {
+		cleanup()
+		return screenshotRequest{}, err
+	}
+
 	options := normalizeScreenshotFormOptions(r)
 	timestamps, err := normalizeScreenshotFormTimestamps(r)
 	if err != nil {
@@ -59,15 +66,16 @@ func parseScreenshotFormRequest(r *http.Request) (screenshotRequest, error) {
 	}
 
 	return screenshotRequest{
-		Mode:         screenshot.NormalizeMode(r.FormValue("mode")),
-		InputPath:    inputPath,
-		Cleanup:      cleanup,
-		Variant:      options.Variant,
-		SubtitleMode: options.SubtitleMode,
-		HDRProcessor: options.HDRProcessor,
-		Count:        options.Count,
-		ProxyURL:     proxyURL,
-		Timestamps:   timestamps,
+		Mode:          screenshot.NormalizeMode(r.FormValue("mode")),
+		InputPath:     inputPath,
+		Cleanup:       cleanup,
+		Variant:       options.Variant,
+		SubtitleMode:  options.SubtitleMode,
+		HDRProcessor:  options.HDRProcessor,
+		Count:         options.Count,
+		ProxyURL:      proxyURL,
+		PixhostDomain: pixhostDomain,
+		Timestamps:    timestamps,
 	}, nil
 }
 
@@ -153,4 +161,17 @@ func normalizeProxyURL(value string) (string, error) {
 	default:
 		return "", fmt.Errorf("代理地址协议不支持: %s", parsed.Scheme)
 	}
+}
+
+// normalizePixhostDomain 校验前端传入的 Pixhost 主域名；空值表示使用服务端默认配置。
+func normalizePixhostDomain(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", nil
+	}
+	domain, err := screenshot.NormalizePixhostDomain(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("Pixhost 域名不支持: %s", trimmed)
+	}
+	return domain, nil
 }
